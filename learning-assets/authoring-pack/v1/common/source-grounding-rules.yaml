@@ -1,0 +1,10 @@
+schema_version: 1.0.0
+rules:
+  - id: SRC-001
+    statement: 每项需求结论都必须引用需求事实或已批准决策。
+  - id: SRC-002
+    statement: 仓库证据可以约束实现，但不能自行创造业务范围。
+  - id: SRC-003
+    statement: 知识证据不能覆盖本 Run 已批准的决策。
+  - id: SRC-004
+    statement: 缺少证据支撑的细节必须保留为假设或待确认问题。

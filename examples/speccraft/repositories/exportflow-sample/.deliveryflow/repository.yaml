@@ -1,0 +1,8 @@
+schema_version: "1.0"
+repository_id: exportflow-sample
+stack: [python-fastapi, react-vite, mysql, redis, rabbitmq]
+read_only_context:
+  - AGENTS.md
+  - README.md
+  - package.json
+  - pyproject.toml

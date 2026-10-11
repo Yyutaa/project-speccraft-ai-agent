@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "deliveryflow-agent-kernel"
+version = "0.1.0"
+description = "Project scaffold for the durable Agent Kernel"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = ["deliveryflow-contracts==0.1.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/deliveryflow_agent_kernel"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true

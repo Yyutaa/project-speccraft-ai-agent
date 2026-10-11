@@ -1,0 +1,21 @@
+fixture_version: "1.0"
+fixtures:
+  - scenario: complete
+    source: complete.md
+    expected_status: WAITING_APPROVAL
+    expected_blocking_dimensions: []
+  - scenario: missing-role-permission-failure
+    source: missing-role-permission-failure.md
+    expected_status: WAITING_CLARIFICATION
+    expected_reason_code: CLARIFICATION_REQUIRED
+    expected_blocking_dimensions: [ACTOR, PERMISSION, FAILURE]
+  - scenario: knowledge-conflict
+    source: knowledge-conflict.md
+    expected_status: WAITING_CLARIFICATION
+    expected_reason_code: CLARIFICATION_REQUIRED
+    expected_blocking_dimensions: [FAILURE]
+  - scenario: knowledge-required-unavailable
+    source: knowledge-required-unavailable.md
+    expected_status: WAITING_CLARIFICATION
+    expected_reason_code: KNOWLEDGE_REQUIRED_UNAVAILABLE
+    expected_blocking_dimensions: [DATA]

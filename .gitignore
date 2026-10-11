@@ -1,0 +1,93 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.hypothesis/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.venv/
+
+# JavaScript
+node_modules/
+dist/
+.vite/
+.pnpm-store/
+coverage/
+*.tsbuildinfo
+
+# Browser and test outputs
+test-results/
+playwright-report/
+blob-report/
+
+# Course-author and Agent private working material
+# These paths may contain raw conversations, reasoning drafts, prompt
+# experiments, hidden answers, or instructor-only evaluation assets.
+/.agent-work/
+/docs/internal/
+/docs/drafts/
+/docs/superpowers/
+/docs/architecture/
+/docs/assets/
+/docs/migration/
+/docs/superpowers/
+/course-private/
+/eval-private/
+/tests/hidden/
+*.transcript.*
+*.conversation.*
+/codex-clipboard-*
+
+# Local coding-host state (product distributions live under plugins/)
+/.codex/
+/.claude/
+/.aider*
+
+# Local runtime state and evidence
+/.deliveryflow-local/model-providers.toml
+/.deliveryflow-state/
+artifacts/*
+!artifacts/.gitkeep
+/.data/
+/runtime-data/
+/log/
+/logs/
+/telemetry/
+/outbox/
+*.log
+*.pid
+*.sock
+*.local.db
+*.local.sqlite
+*.local.sqlite3
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+/.secrets/
+*.private.pem
+*.private.key
+credentials.local.*
+
+# IDE, temporary, and operating-system files
+.idea/
+.vscode/
+.fleet/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Native Long-Term Memory
+memory/
+
+# Keep local-only source material out of the public repository
+/implementation-guide-24-lessons/
