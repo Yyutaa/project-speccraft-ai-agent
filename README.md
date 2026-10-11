@@ -2,21 +2,25 @@
 
 SpecCraft 是一个个人开发项目，用于探索本地优先、契约驱动的 AI 需求分析与研发规格编制。目标是把需求整理为经过人工确认的 `PRD.md`、`TD.md` 和机器可读的交付规格。
 
-当前仓库基于轻量工程脚手架，完整领域工作流仍在逐步实现。现阶段提供前后端项目结构、基础 API、包边界、样例输入和启动脚本；尚未实现模型调用、持久化 Run、PRD/TD 工作流或完整 Workbench。
+当前仓库仍是教学脚手架，完整领域工作流正在逐步实现。阶段 01 提供一个同步、单进程内存的 PRD-first 演示：确定性 Fake Provider 生成草稿，用户分别批准 PRD 和 TD，页面展示 API 返回的 Run 投影。它不具备持久化、跨进程恢复或真实内容质量保障。
 
 ## 当前内容
 
 - React 19、Vite、TypeScript 与 Ant Design 前端壳；
-- FastAPI 健康检查与项目状态 API；
-- `contracts`、`agent-kernel`、`speccraft` Python 包结构；
+- FastAPI 健康检查、项目状态与最小 Run/审批 API；
+- Pydantic Run 请求和响应 Contract；
+- `speccraft` 中的单进程内存 Runner 与确定性 Fake Provider；
+- `contracts`、`agent-kernel`、`speccraft` Python 包；
 - CLI 和 Worker 入口；
 - 匿名需求、仓库样例与 PRD/TD 编制资源；
 - 前端和后端的基础验证入口。
 
+当前 Run 演示支持创建、读取、批准 PRD、批准 TD。PRD 批准后才生成 TD，TD 批准后才生成 DeliverySpec。进程重启会清空全部 Run；重复创建不保证幂等，审批命令以 revision 校验并拒绝重复或越序操作。
+
 ## 计划中的能力
 
 - 以共享 Contract 定义稳定输入、产物和阶段结果；
-- 实现本地 Run、Artifact、审批与恢复；
+- 实现持久化 Run、Artifact、审批与恢复；
 - 支持需求澄清、PRD 生成与确认，再生成统一 TD；
 - 增加 Provider 驱动的 API 与 Workbench；
 - 探索 Codex Skill 驱动的本地执行入口。

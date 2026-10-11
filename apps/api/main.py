@@ -1,9 +1,22 @@
-from typing import Literal
+from typing import Annotated, Literal
 
-from fastapi import FastAPI
+from deliveryflow_contracts.runs import (
+    ApprovalRequest,
+    CreateRunRequest,
+    RunResponse,
+)
+from deliveryflow_speccraft.runner import (
+    InMemoryRunner,
+    InvalidRunTransition,
+    RevisionConflict,
+    RunNotFound,
+)
+from fastapi import FastAPI, HTTPException, Path
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+runner = InMemoryRunner()
+RunIdPath = Annotated[str, Path(min_length=1)]
 
 class HealthResponse(BaseModel):
     status: Literal["ok"]
@@ -93,13 +106,72 @@ def read_scaffold() -> ScaffoldResponse:
             "React 与 FastAPI 最小链路",
             "Python 多包边界",
             "匿名需求与目标仓库样例",
+            "进程内存 Run、确定性 Fake Provider 与 PRD-first 人工审批 Happy Path",
         ],
         deferred_capabilities=[
-            "LLM Provider 与模型调用",
-            "Run、Artifact 与持久化",
-            "PRD/TD Workflow 与质量闭环",
+            "真实 LLM Provider 与模型调用",
+            "持久化 Run/Artifact 与跨进程恢复",
+            "完整 PRD/TD Workflow 与质量闭环",
             "Provider-driven Worker 与 Workbench",
             "Codex Native Skills 与 Host Runtime",
         ],
         stages=STAGES,
     )
+
+
+@app.post("/api/runs", response_model=RunResponse, status_code=201)
+def create_run(request: CreateRunRequest) -> RunResponse:
+    return runner.create_run(request)
+
+
+@app.get("/api/runs/{run_id}", response_model=RunResponse)
+def read_run(run_id: RunIdPath) -> RunResponse:
+    try:
+        return runner.get_run(run_id)
+    except RunNotFound as error:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "run_not_found"},
+        ) from error
+
+
+@app.post("/api/runs/{run_id}/approvals/prd", response_model=RunResponse)
+def approve_prd(run_id: RunIdPath, request: ApprovalRequest) -> RunResponse:
+    try:
+        return runner.approve_prd(run_id, request.revision)
+    except RunNotFound as error:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "run_not_found"},
+        ) from error
+    except InvalidRunTransition as error:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "invalid_run_transition"},
+        ) from error
+    except RevisionConflict as error:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "revision_conflict"},
+        ) from error
+
+
+@app.post("/api/runs/{run_id}/approvals/td", response_model=RunResponse)
+def approve_td(run_id: RunIdPath, request: ApprovalRequest) -> RunResponse:
+    try:
+        return runner.approve_td(run_id, request.revision)
+    except RunNotFound as error:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "run_not_found"},
+        ) from error
+    except InvalidRunTransition as error:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "invalid_run_transition"},
+        ) from error
+    except RevisionConflict as error:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "revision_conflict"},
+        ) from error

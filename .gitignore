@@ -91,3 +91,8 @@ memory/
 
 # Keep local-only source material out of the public repository
 /implementation-guide-24-lessons/
+!/implementation-guide-24-lessons/
+/implementation-guide-24-lessons/*
+!/implementation-guide-24-lessons/00-agent-contract-and-scaffold.md
+!/implementation-guide-24-lessons/00-contract-and-scaffold-handoff.md
+!/implementation-guide-24-lessons/01-in-memory-happy-path-handoff.md

@@ -18,8 +18,26 @@ export type Health = {
   service: string;
 };
 
-async function request<T>(path: string): Promise<T> {
-  const response = await fetch(path);
+export type Run = {
+  run_id: string;
+  requirement: string;
+  status: "prd_awaiting_approval" | "td_awaiting_approval" | "completed";
+  prd_draft: { revision: number; content: string };
+  prd_approval: { revision: number; approved_at: string } | null;
+  td_draft: { revision: number; content: string } | null;
+  td_approval: { revision: number; approved_at: string } | null;
+  delivery_spec: {
+    run_id: string;
+    prd_revision: number;
+    td_revision: number;
+    prd_content: string;
+    td_content: string;
+  } | null;
+  available_commands: Array<"approve_prd" | "approve_td">;
+};
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(path, init);
   if (!response.ok) {
     throw new Error(`请求失败：${response.status}`);
   }
@@ -29,4 +47,19 @@ async function request<T>(path: string): Promise<T> {
 export const api = {
   health: () => request<Health>("/api/health"),
   scaffold: () => request<Scaffold>("/api/scaffold"),
+  createRun: (requirement: string) => request<Run>("/api/runs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ requirement }),
+  }),
+  approvePrd: (run: Run) => request<Run>(`/api/runs/${run.run_id}/approvals/prd`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ revision: run.prd_draft.revision }),
+  }),
+  approveTd: (run: Run) => request<Run>(`/api/runs/${run.run_id}/approvals/td`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ revision: run.td_draft?.revision }),
+  }),
 };

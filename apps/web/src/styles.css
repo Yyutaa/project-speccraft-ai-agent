@@ -32,6 +32,16 @@ h1 { margin: 0; font-size: clamp(40px, 7vw, 72px); line-height: .98; letter-spac
 .section-heading { display: flex; align-items: end; justify-content: space-between; gap: 28px; margin-bottom: 24px; }
 .section-heading h2 { margin: 0; font-size: 32px; letter-spacing: -.03em; }
 .section-heading > p { max-width: 420px; margin: 0; color: #69716f; }
+.run-section { margin-bottom: 64px; }
+.run-section > .ant-card { border-color: #dfe3df; box-shadow: none; }
+.run-section label { display: block; margin-bottom: 8px; font-weight: 600; }
+.run-action { margin-top: 16px; }
+.run-error { margin-top: 16px; }
+.run-result { margin-top: 24px; }
+.run-status { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #69716f; }
+.run-result article { margin-top: 20px; padding-top: 16px; border-top: 1px solid #e8ebe8; }
+.run-result h3 { margin: 0 0 12px; }
+.run-result pre { margin: 0; padding: 16px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: #f5f6f3; color: #26322f; }
 .stage-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 0; padding: 0; list-style: none; }
 .stage-card { height: 100%; border-color: #dfe3df; box-shadow: none; }
 .stage-meta { display: flex; justify-content: space-between; align-items: center; color: #7d8582; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
