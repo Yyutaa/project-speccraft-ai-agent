@@ -3,7 +3,14 @@
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from deliveryflow_contracts.context import (
+    ContextMode,
+    HarnessContextSlice,
+    RepositoryBinding,
+    SourceSnapshot,
+)
 
 
 class RunStatus(StrEnum):
@@ -20,12 +27,17 @@ class AvailableCommand(StrEnum):
 class CreateRunRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    requirement: str = Field(min_length=1)
+    requirement: str | None = None
+    requirement_path: str | None = Field(default=None, min_length=1)
+    context_mode: ContextMode = ContextMode.INDEXED_READONLY
 
-    @field_validator("requirement", mode="before")
-    @classmethod
-    def trim_requirement(cls, value: object) -> object:
-        return value.strip() if isinstance(value, str) else value
+    @model_validator(mode="after")
+    def require_one_requirement_source(self) -> "CreateRunRequest":
+        has_inline = self.requirement is not None and bool(self.requirement.strip())
+        has_file = self.requirement_path is not None and bool(self.requirement_path.strip())
+        if has_inline == has_file:
+            raise ValueError("provide exactly one nonblank requirement or requirement_path")
+        return self
 
 
 class ApprovalRequest(BaseModel):
@@ -70,6 +82,9 @@ class RunResponse(BaseModel):
     td_approval: Approval | None = None
     delivery_spec: DeliverySpec | None = None
     available_commands: tuple[AvailableCommand, ...]
+    source_snapshot: SourceSnapshot
+    repository_binding: RepositoryBinding
+    harness_context: HarnessContextSlice
 
     @model_validator(mode="after")
     def validate_state_projection(self) -> "RunResponse":

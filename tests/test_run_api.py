@@ -137,3 +137,24 @@ def test_unknown_run_is_not_found_and_blank_requirement_is_invalid() -> None:
     assert missing.status_code == 404
     assert missing.json()["detail"]["code"] == "run_not_found"
     assert blank.status_code == 422
+
+
+def test_api_returns_auditable_sources_and_rejects_paths_outside_the_sample_root() -> None:
+    created_response = client.post(
+        "/api/runs",
+        json={"requirement_path": "requirements/large-excel-import.md", "context_mode": "indexed_readonly"},
+    )
+    created = created_response.json()
+
+    assert created_response.status_code == 201
+    assert created["source_snapshot"]["source"]["source_type"] == "requirement_file"
+    assert created["source_snapshot"]["normalized_path"] == "requirements/large-excel-import.md"
+    assert len(created["source_snapshot"]["sha256"]) == 64
+    assert created["repository_binding"]["permission"] == "read_only"
+    assert created["harness_context"]["entries"]
+    assert created["harness_context"]["sha256"]
+
+    rejected = client.post("/api/runs", json={"requirement_path": "../../README.md"})
+
+    assert rejected.status_code == 403
+    assert rejected.json()["detail"]["code"] == "path_outside_root"

@@ -1,9 +1,15 @@
+from pathlib import Path as FilePath
 from typing import Annotated, Literal
 
+from deliveryflow_contracts.context import HarnessErrorCode
 from deliveryflow_contracts.runs import (
     ApprovalRequest,
     CreateRunRequest,
     RunResponse,
+)
+from deliveryflow_speccraft.repository_context import (
+    HarnessReadError,
+    RepositoryHarness,
 )
 from deliveryflow_speccraft.runner import (
     InMemoryRunner,
@@ -15,7 +21,8 @@ from fastapi import FastAPI, HTTPException, Path
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-runner = InMemoryRunner()
+REPOSITORY_ROOT = FilePath(__file__).resolve().parents[2] / "examples/speccraft/repositories/exportflow-sample"
+runner = InMemoryRunner(RepositoryHarness(REPOSITORY_ROOT))
 RunIdPath = Annotated[str, Path(min_length=1)]
 
 class HealthResponse(BaseModel):
@@ -121,7 +128,21 @@ def read_scaffold() -> ScaffoldResponse:
 
 @app.post("/api/runs", response_model=RunResponse, status_code=201)
 def create_run(request: CreateRunRequest) -> RunResponse:
-    return runner.create_run(request)
+    try:
+        return runner.create_run(request)
+    except HarnessReadError as error:
+        status_code = {
+            HarnessErrorCode.PATH_OUTSIDE_ROOT: 403,
+            HarnessErrorCode.SYMLINK_NOT_ALLOWED: 403,
+            HarnessErrorCode.PATH_NOT_ALLOWED: 403,
+            HarnessErrorCode.SOURCE_NOT_FOUND: 404,
+            HarnessErrorCode.FILE_TOO_LARGE: 413,
+            HarnessErrorCode.CONTEXT_TOO_LARGE: 413,
+            HarnessErrorCode.UNSUPPORTED_FILE: 415,
+        }.get(error.code, 422)
+        raise HTTPException(
+            status_code=status_code, detail={"code": error.code.value}
+        ) from error
 
 
 @app.get("/api/runs/{run_id}", response_model=RunResponse)

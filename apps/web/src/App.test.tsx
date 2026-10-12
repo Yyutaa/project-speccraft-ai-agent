@@ -22,6 +22,32 @@ function run(status: string) {
     td_approval: null,
     delivery_spec: null,
     available_commands: ["approve_prd"],
+    source_snapshot: {
+      source: { source_type: "inline_requirement", path: null },
+      normalized_path: null,
+      sha256: "a".repeat(64),
+      read_status: "read",
+      content: "做一个问候页面",
+    },
+    repository_binding: {
+      repository_id: "exportflow-sample",
+      root_path: "/workspace/exportflow-sample",
+      permission: "read_only",
+      context_mode: "guide_only",
+    },
+    harness_context: {
+      entries: [{
+        snapshot: {
+          source: { source_type: "repository_guide", path: "AGENTS.md" },
+          normalized_path: "AGENTS.md",
+          sha256: "b".repeat(64),
+          read_status: "read",
+          content: "技术约束",
+        },
+        selection_reason: "repository guide supplies engineering constraints",
+      }],
+      sha256: "c".repeat(64),
+    },
   };
   if (status === "td_awaiting_approval") {
     return {
@@ -83,6 +109,10 @@ test("runs the PRD-first happy path from API-projected state", async () => {
   fireEvent.click(screen.getByRole("button", { name: "创建 Run" }));
   expect(await screen.findByText("等待 PRD 人工审批")).toBeInTheDocument();
   expect(screen.getByText("# PRD 问候页面")).toBeInTheDocument();
+  expect(screen.getByText("只读工程上下文 · guide_only")).toBeInTheDocument();
+  expect(screen.getByText("AGENTS.md")).toBeInTheDocument();
+  expect(screen.getByText(/repository guide supplies engineering constraints/)).toBeInTheDocument();
+  expect(screen.getByText(`SHA-256 ${"b".repeat(64)}`)).toBeInTheDocument();
   expect(fetcher).toHaveBeenCalledWith("/api/runs", expect.objectContaining({
     method: "POST",
     body: JSON.stringify({ requirement: "做一个问候页面" }),

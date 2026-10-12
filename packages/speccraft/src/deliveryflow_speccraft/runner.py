@@ -13,6 +13,8 @@ from deliveryflow_contracts.runs import (
     RunStatus,
 )
 
+from deliveryflow_speccraft.repository_context import RepositoryHarness
+
 
 class RunNotFound(Exception):
     """Raised when a Run identifier is not present in this process."""
@@ -57,20 +59,26 @@ class FakeProvider:
 class InMemoryRunner:
     """Owns Run state for one API process; restarting the process clears it."""
 
-    def __init__(self) -> None:
+    def __init__(self, harness: RepositoryHarness) -> None:
         self._provider = FakeProvider()
+        self._harness = harness
         self._runs: dict[str, RunResponse] = {}
         self._lock = Lock()
 
     def create_run(self, request: CreateRunRequest) -> RunResponse:
-        prd = self._provider.create_prd(request.requirement)
+        context = self._harness.build(request)
+        requirement = context.requirement.content.strip()
+        prd = self._provider.create_prd(requirement)
         run_id = str(uuid4())
         run = RunResponse(
             run_id=run_id,
-            requirement=request.requirement,
+            requirement=requirement,
             status=RunStatus.PRD_AWAITING_APPROVAL,
             prd_draft=prd,
             available_commands=(AvailableCommand.APPROVE_PRD,),
+            source_snapshot=context.requirement,
+            repository_binding=context.binding,
+            harness_context=context.context,
         )
         with self._lock:
             self._runs[run_id] = run

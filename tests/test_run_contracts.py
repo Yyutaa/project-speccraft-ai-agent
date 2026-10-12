@@ -1,4 +1,14 @@
+import hashlib
+
 import pytest
+from deliveryflow_contracts.context import (
+    ContextMode,
+    HarnessContextSlice,
+    RepositoryBinding,
+    SourceRef,
+    SourceSnapshot,
+    SourceType,
+)
 from deliveryflow_contracts.runs import (
     Approval,
     AvailableCommand,
@@ -11,10 +21,29 @@ from deliveryflow_contracts.runs import (
 from pydantic import ValidationError
 
 
-def test_create_run_request_trims_requirement_and_rejects_blank_text() -> None:
+def context_fields() -> dict[str, object]:
+    return {
+        "source_snapshot": SourceSnapshot(
+            source=SourceRef(source_type=SourceType.INLINE_REQUIREMENT),
+            sha256=hashlib.sha256("需求".encode()).hexdigest(),
+            read_status="read",
+            content="需求",
+        ),
+        "repository_binding": RepositoryBinding(
+            repository_id="exportflow-sample",
+            root_path="/sample",
+            context_mode=ContextMode.GUIDE_ONLY,
+        ),
+        "harness_context": HarnessContextSlice(
+            entries=(), sha256=hashlib.sha256(b"[]").hexdigest()
+        ),
+    }
+
+
+def test_create_run_request_preserves_raw_requirement_and_rejects_blank_text() -> None:
     request = CreateRunRequest(requirement="  导出大文件时显示进度。  ")
 
-    assert request.requirement == "导出大文件时显示进度。"
+    assert request.requirement == "  导出大文件时显示进度。  "
     with pytest.raises(ValidationError):
         CreateRunRequest(requirement=" \n ")
 
@@ -26,6 +55,7 @@ def test_prd_waiting_run_has_only_the_prd_approval_command() -> None:
         status=RunStatus.PRD_AWAITING_APPROVAL,
         prd_draft=DraftArtifact(revision=1, content="# PRD"),
         available_commands=(AvailableCommand.APPROVE_PRD,),
+        **context_fields(),
     )
 
     assert run.td_draft is None
@@ -42,6 +72,7 @@ def test_completed_run_requires_both_approvals_and_delivery_spec() -> None:
             prd_draft=DraftArtifact(revision=1, content="# PRD"),
             prd_approval=Approval(revision=1),
             available_commands=(),
+            **context_fields(),
         )
 
 
@@ -62,6 +93,7 @@ def test_completed_run_contains_version_bound_delivery_spec() -> None:
             td_content="# TD",
         ),
         available_commands=(),
+        **context_fields(),
     )
 
     assert run.model_dump(mode="json")["status"] == "completed"

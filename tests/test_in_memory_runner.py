@@ -1,9 +1,12 @@
+from pathlib import Path
+
 import pytest
 from deliveryflow_contracts.runs import (
     AvailableCommand,
     CreateRunRequest,
     RunStatus,
 )
+from deliveryflow_speccraft.repository_context import RepositoryHarness
 from deliveryflow_speccraft.runner import (
     InMemoryRunner,
     InvalidRunTransition,
@@ -11,8 +14,13 @@ from deliveryflow_speccraft.runner import (
 )
 
 
+def make_runner() -> InMemoryRunner:
+    root = Path(__file__).parent.parent / "examples/speccraft/repositories/exportflow-sample"
+    return InMemoryRunner(RepositoryHarness(root))
+
+
 def test_run_moves_from_prd_approval_to_td_approval_to_completion() -> None:
-    runner = InMemoryRunner()
+    runner = make_runner()
     created = runner.create_run(CreateRunRequest(requirement="导出时显示进度。"))
 
     assert created.status is RunStatus.PRD_AWAITING_APPROVAL
@@ -37,7 +45,7 @@ def test_run_moves_from_prd_approval_to_td_approval_to_completion() -> None:
 
 
 def test_td_cannot_be_approved_before_prd_and_run_stays_unchanged() -> None:
-    runner = InMemoryRunner()
+    runner = make_runner()
     created = runner.create_run(CreateRunRequest(requirement="导出时显示进度。"))
 
     with pytest.raises(InvalidRunTransition):
@@ -47,7 +55,7 @@ def test_td_cannot_be_approved_before_prd_and_run_stays_unchanged() -> None:
 
 
 def test_stale_prd_revision_is_rejected_without_advancing_run() -> None:
-    runner = InMemoryRunner()
+    runner = make_runner()
     created = runner.create_run(CreateRunRequest(requirement="导出时显示进度。"))
 
     with pytest.raises(RevisionConflict):
@@ -57,7 +65,7 @@ def test_stale_prd_revision_is_rejected_without_advancing_run() -> None:
 
 
 def test_stale_td_revision_is_rejected_without_completing_run() -> None:
-    runner = InMemoryRunner()
+    runner = make_runner()
     created = runner.create_run(CreateRunRequest(requirement="导出时显示进度。"))
     awaiting_td = runner.approve_prd(created.run_id, revision=1)
 
@@ -68,7 +76,7 @@ def test_stale_td_revision_is_rejected_without_completing_run() -> None:
 
 
 def test_repeated_prd_approval_is_rejected_without_changing_td_draft() -> None:
-    runner = InMemoryRunner()
+    runner = make_runner()
     created = runner.create_run(CreateRunRequest(requirement="导出时显示进度。"))
     after_prd = runner.approve_prd(created.run_id, revision=1)
 
@@ -79,7 +87,7 @@ def test_repeated_prd_approval_is_rejected_without_changing_td_draft() -> None:
 
 
 def test_repeated_td_approval_is_rejected_without_changing_completed_run() -> None:
-    runner = InMemoryRunner()
+    runner = make_runner()
     created = runner.create_run(CreateRunRequest(requirement="导出时显示进度。"))
     runner.approve_prd(created.run_id, revision=1)
     completed = runner.approve_td(created.run_id, revision=1)
@@ -91,7 +99,7 @@ def test_repeated_td_approval_is_rejected_without_changing_completed_run() -> No
 
 
 def test_fake_provider_generates_same_drafts_for_same_requirement() -> None:
-    runner = InMemoryRunner()
+    runner = make_runner()
 
     first = runner.create_run(CreateRunRequest(requirement="导出时显示进度。"))
     second = runner.create_run(CreateRunRequest(requirement="导出时显示进度。"))

@@ -18,6 +18,14 @@ export type Health = {
   service: string;
 };
 
+export type SourceSnapshot = {
+  source: { source_type: "inline_requirement" | "requirement_file" | "repository_guide" | "repository_metadata"; path: string | null };
+  normalized_path: string | null;
+  sha256: string;
+  read_status: "read";
+  content: string;
+};
+
 export type Run = {
   run_id: string;
   requirement: string;
@@ -34,6 +42,17 @@ export type Run = {
     td_content: string;
   } | null;
   available_commands: Array<"approve_prd" | "approve_td">;
+  source_snapshot: SourceSnapshot;
+  repository_binding: {
+    repository_id: string;
+    root_path: string;
+    permission: "read_only";
+    context_mode: "guide_only" | "indexed_readonly";
+  };
+  harness_context: {
+    entries: Array<{ snapshot: SourceSnapshot; selection_reason: string }>;
+    sha256: string;
+  };
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {

@@ -108,6 +108,23 @@ export default function App() {
                       <span>Run {run.run_id}</span>
                       <Tag>{statusLabels[run.status]}</Tag>
                     </div>
+                    <article aria-label="来源与只读工程上下文">
+                      <h3>来源与只读工程上下文</h3>
+                      <p>需求来源：{run.source_snapshot.normalized_path ?? "用户内联输入"}</p>
+                      <code>需求 SHA-256 {run.source_snapshot.sha256}</code>
+                      <p>仓库：{run.repository_binding.repository_id} · {run.repository_binding.permission}</p>
+                      <p>只读工程上下文 · {run.repository_binding.context_mode}</p>
+                      <code>上下文 SHA-256 {run.harness_context.sha256}</code>
+                      <ul>
+                        {run.harness_context.entries.map((entry) => (
+                          <li key={entry.snapshot.normalized_path}>
+                            <strong>{entry.snapshot.normalized_path}</strong>: {entry.selection_reason}
+                            <br />
+                            <code>SHA-256 {entry.snapshot.sha256}</code>
+                          </li>
+                        ))}
+                      </ul>
+                    </article>
                     <article>
                       <h3>PRD 草稿 · r{run.prd_draft.revision}</h3>
                       <pre>{run.prd_draft.content}</pre>
