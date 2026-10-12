@@ -19,7 +19,9 @@ def test_runner_keeps_requirement_source_separate_from_harness_context() -> None
     assert response.source_snapshot.source.source_type is SourceType.REQUIREMENT_FILE
     assert response.source_snapshot.normalized_path == "requirements/large-excel-import.md"
     assert "Excel" in response.requirement
-    assert "分层架构" not in response.prd_draft.content
+    assert response.prd_draft is None
+    assert "分层架构" not in response.ledger.authoritative_view
+    assert response.status.value == "awaiting_clarification"
     assert response.repository_binding.permission == "read_only"
     assert response.harness_context.entries
     assert all(entry.selection_reason for entry in response.harness_context.entries)

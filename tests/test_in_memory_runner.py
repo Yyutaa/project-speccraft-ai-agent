@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from deliveryflow_contracts.facts import ClarificationAnswer, SubmitClarificationRequest
 from deliveryflow_contracts.runs import (
     AvailableCommand,
     CreateRunRequest,
@@ -19,10 +20,33 @@ def make_runner() -> InMemoryRunner:
     return InMemoryRunner(RepositoryHarness(root))
 
 
+def answer_clarification(runner: InMemoryRunner, run):
+    assert run.clarification_batch is not None
+    return runner.submit_clarification(
+        run.run_id,
+        SubmitClarificationRequest(
+            expected_revision=run.ledger.revision,
+            command_id="test-command",
+            answers=tuple(
+                ClarificationAnswer(
+                    question_id=proposal.question_id,
+                    selected_option_id=proposal.options[0].option_id,
+                )
+                for proposal in run.clarification_batch.proposals
+                if proposal.gap_id in run.clarification_batch.blocking_gap_ids
+            ),
+        ),
+    )
+
+
 def test_run_moves_from_prd_approval_to_td_approval_to_completion() -> None:
     runner = make_runner()
-    created = runner.create_run(CreateRunRequest(requirement="导出时显示进度。"))
+    waiting = runner.create_run(CreateRunRequest(requirement="导出时显示进度。"))
 
+    assert waiting.status is RunStatus.AWAITING_CLARIFICATION
+    assert waiting.prd_draft is None
+    assert waiting.clarification_batch is not None
+    created = answer_clarification(runner, waiting)
     assert created.status is RunStatus.PRD_AWAITING_APPROVAL
     assert created.available_commands == (AvailableCommand.APPROVE_PRD,)
     assert created.td_draft is None
@@ -56,7 +80,9 @@ def test_td_cannot_be_approved_before_prd_and_run_stays_unchanged() -> None:
 
 def test_stale_prd_revision_is_rejected_without_advancing_run() -> None:
     runner = make_runner()
-    created = runner.create_run(CreateRunRequest(requirement="导出时显示进度。"))
+    created = answer_clarification(
+        runner, runner.create_run(CreateRunRequest(requirement="导出时显示进度。"))
+    )
 
     with pytest.raises(RevisionConflict):
         runner.approve_prd(created.run_id, revision=2)
@@ -66,7 +92,9 @@ def test_stale_prd_revision_is_rejected_without_advancing_run() -> None:
 
 def test_stale_td_revision_is_rejected_without_completing_run() -> None:
     runner = make_runner()
-    created = runner.create_run(CreateRunRequest(requirement="导出时显示进度。"))
+    created = answer_clarification(
+        runner, runner.create_run(CreateRunRequest(requirement="导出时显示进度。"))
+    )
     awaiting_td = runner.approve_prd(created.run_id, revision=1)
 
     with pytest.raises(RevisionConflict):
@@ -77,7 +105,9 @@ def test_stale_td_revision_is_rejected_without_completing_run() -> None:
 
 def test_repeated_prd_approval_is_rejected_without_changing_td_draft() -> None:
     runner = make_runner()
-    created = runner.create_run(CreateRunRequest(requirement="导出时显示进度。"))
+    created = answer_clarification(
+        runner, runner.create_run(CreateRunRequest(requirement="导出时显示进度。"))
+    )
     after_prd = runner.approve_prd(created.run_id, revision=1)
 
     with pytest.raises(InvalidRunTransition):
@@ -88,7 +118,9 @@ def test_repeated_prd_approval_is_rejected_without_changing_td_draft() -> None:
 
 def test_repeated_td_approval_is_rejected_without_changing_completed_run() -> None:
     runner = make_runner()
-    created = runner.create_run(CreateRunRequest(requirement="导出时显示进度。"))
+    created = answer_clarification(
+        runner, runner.create_run(CreateRunRequest(requirement="导出时显示进度。"))
+    )
     runner.approve_prd(created.run_id, revision=1)
     completed = runner.approve_td(created.run_id, revision=1)
 
@@ -101,11 +133,19 @@ def test_repeated_td_approval_is_rejected_without_changing_completed_run() -> No
 def test_fake_provider_generates_same_drafts_for_same_requirement() -> None:
     runner = make_runner()
 
-    first = runner.create_run(CreateRunRequest(requirement="导出时显示进度。"))
-    second = runner.create_run(CreateRunRequest(requirement="导出时显示进度。"))
+    first = answer_clarification(
+        runner, runner.create_run(CreateRunRequest(requirement="导出时显示进度。"))
+    )
+    second = answer_clarification(
+        runner, runner.create_run(CreateRunRequest(requirement="导出时显示进度。"))
+    )
+    assert first.prd_draft is not None
+    assert second.prd_draft is not None
     first_completed = runner.approve_prd(first.run_id, revision=1)
     second_completed = runner.approve_prd(second.run_id, revision=1)
 
+    assert first.prd_draft is not None
+    assert second.prd_draft is not None
     assert first.prd_draft.content == second.prd_draft.content
     assert first_completed.td_draft is not None
     assert second_completed.td_draft is not None

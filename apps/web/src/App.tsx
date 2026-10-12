@@ -1,10 +1,11 @@
 import { CheckCircleOutlined, ClockCircleOutlined } from "@ant-design/icons";
-import { Alert, Button, Card, ConfigProvider, Input, Spin, Tag } from "antd";
+import { Alert, Button, Card, ConfigProvider, Input, Radio, Spin, Tag } from "antd";
 import { useEffect, useState } from "react";
 
-import { api, Run, Scaffold } from "./api";
+import { api, ClarificationAnswer, Run, Scaffold } from "./api";
 
 const statusLabels: Record<Run["status"], string> = {
+  awaiting_clarification: "等待用户澄清需求",
   prd_awaiting_approval: "等待 PRD 人工审批",
   td_awaiting_approval: "等待 TD 人工审批",
   completed: "已完成",
@@ -15,6 +16,10 @@ export default function App() {
   const [scaffold, setScaffold] = useState<Scaffold | null>(null);
   const [requirement, setRequirement] = useState("");
   const [run, setRun] = useState<Run | null>(null);
+  const [answers, setAnswers] = useState<Record<string, {
+    selectedOptionId?: string;
+    customAnswer?: string;
+  }>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
@@ -32,12 +37,29 @@ export default function App() {
     setRunError(null);
     try {
       setRun(await action());
+      setAnswers({});
     } catch (reason) {
       setRunError(reason instanceof Error ? reason.message : "请求失败");
     } finally {
       setBusy(false);
     }
   }
+
+  const blockingProposals = run?.clarification_batch?.proposals.filter(
+    (proposal) => run.clarification_batch?.blocking_gap_ids.includes(proposal.gap_id),
+  ) ?? [];
+  const clarificationAnswers = blockingProposals.flatMap<ClarificationAnswer>((proposal) => {
+    const answer = answers[proposal.question_id];
+    if (answer?.customAnswer?.trim()) {
+      return [{ question_id: proposal.question_id, custom_answer: answer.customAnswer.trim() }];
+    }
+    if (answer?.selectedOptionId) {
+      return [{ question_id: proposal.question_id, selected_option_id: answer.selectedOptionId }];
+    }
+    return [];
+  });
+  const canSubmitClarification = blockingProposals.length > 0
+    && clarificationAnswers.length === blockingProposals.length;
 
   return (
     <ConfigProvider
@@ -58,7 +80,7 @@ export default function App() {
           <p className="eyebrow">个人开发项目</p>
           <h1>构建本地优先的 AI 规格编制工具</h1>
           <p className="hero-copy">
-            从确定性内存演示开始：先审阅并批准 PRD，再审阅 TD，最后生成 DeliverySpec。持久化、真实模型和完整工作流仍未实现。
+            先确认关键需求事实，再审阅并批准 PRD、TD，最后生成 DeliverySpec。数据仍保存在进程内，真实模型和完整工作流尚未实现。
           </p>
           {error ? (
             <Alert type="error" showIcon message="API 未连接" description={error} />
@@ -125,11 +147,64 @@ export default function App() {
                         ))}
                       </ul>
                     </article>
-                    <article>
-                      <h3>PRD 草稿 · r{run.prd_draft.revision}</h3>
-                      <pre>{run.prd_draft.content}</pre>
-                      {run.prd_approval && <p>PRD 已批准 · r{run.prd_approval.revision}</p>}
+                    <article aria-label="权威事实账本">
+                      <h3>权威事实账本 · r{run.ledger.revision}</h3>
+                      <ul>{run.ledger.facts.map((fact) => (
+                        <li key={fact.fact_id}>
+                          <Tag>{fact.kind === "decision" ? "用户决定" : "来源事实"}</Tag>{fact.claim}
+                        </li>
+                      ))}</ul>
                     </article>
+                    {run.status === "awaiting_clarification" && run.clarification_batch && (
+                      <article aria-label="需求澄清">
+                        <h3>需求信息待确认</h3>
+                        <p>推荐项只供参考，不会自动选中。提交后，明确答案才会记为用户决定。</p>
+                        {blockingProposals.map((proposal) => (
+                          <fieldset className="clarification-question" key={proposal.question_id} disabled={busy}>
+                            <legend>{proposal.question}</legend>
+                            <Radio.Group
+                              aria-label={proposal.question}
+                              value={answers[proposal.question_id]?.selectedOptionId}
+                              onChange={(event) => setAnswers((current) => ({
+                                ...current,
+                                [proposal.question_id]: { selectedOptionId: event.target.value },
+                              }))}
+                            >
+                              {proposal.options.map((option) => (
+                                <Radio key={option.option_id} value={option.option_id}>
+                                  {option.label}{proposal.recommended_option_id === option.option_id && <Tag>推荐</Tag>}
+                                </Radio>
+                              ))}
+                            </Radio.Group>
+                            {proposal.recommendation_reason && <p>Agent 推荐依据：{proposal.recommendation_reason}</p>}
+                            <Input
+                              aria-label={`自定义回答：${proposal.question}`}
+                              value={answers[proposal.question_id]?.customAnswer ?? ""}
+                              onChange={(event) => setAnswers((current) => ({
+                                ...current,
+                                [proposal.question_id]: { customAnswer: event.target.value },
+                              }))}
+                              placeholder="也可以填写自定义答案"
+                              disabled={busy}
+                            />
+                          </fieldset>
+                        ))}
+                        {run.available_commands.includes("submit_clarification") && (
+                          <Button className="run-action" loading={busy} disabled={!canSubmitClarification}
+                            onClick={() => void perform(() => api.submitClarification(run, clarificationAnswers))}>
+                            提交澄清回答
+                          </Button>
+                        )}
+                      </article>
+                    )}
+                    {!run.prd_draft && <p>需求澄清完成后才会生成 PRD 草稿。</p>}
+                    {run.prd_draft && (
+                      <article>
+                        <h3>PRD 草稿 · r{run.prd_draft.revision}</h3>
+                        <pre>{run.prd_draft.content}</pre>
+                        {run.prd_approval && <p>PRD 已批准 · r{run.prd_approval.revision}</p>}
+                      </article>
+                    )}
                     {run.td_draft && (
                       <article>
                         <h3>TD 草稿 · r{run.td_draft.revision}</h3>

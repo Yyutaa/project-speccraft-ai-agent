@@ -79,6 +79,10 @@ PRD 必须先批准冻结，TD 不得回写已批准 PRD。模型不得代替用
 - HarnessContextSlice 只包含显式选择的有限文本切片、来源 Hash 与选择理由；切片 Hash 对有序条目及内容执行确定性序列化后计算。仓库工程约束不能升级为产品 Fact 或改写需求。
 - 仓库路径必须拒绝穿越、符号链接、敏感/缓存目录、非文本和超限文件；读取失败返回稳定错误码，Run 创建不得留下部分状态。路径安全及过滤行为须同时覆盖成功与拒绝测试。
 - Harness 错误码由共享 Contract 枚举定义；API 可映射 HTTP 状态，但不得改写错误码语义。
+- `FACT` 必须绑定 SourceSnapshot 的 Hash 与原文摘录；`DECISION` 必须绑定用户澄清命令、问题、批次和账本 revision。推荐项属于提案，不进入权威 Ledger，也不能自动消除 Gap。
+- 五个必需维度（角色、流程、权限、失败、验收）缺失或冲突时，确定性 Completeness Gate 必须暂停 PRD 生成；分析器不得调用模型或从自由文本猜测维度完整性。
+- 下游规格生成只读取 Fact Ledger 的权威视图；同维度用户 Decision 覆盖冲突来源事实。页面只显示服务端 Run/账本投影，并以独立用户命令提交答案。
+- 澄清答案必须完整覆盖当前阻塞问题并匹配 `expected_revision`；内存 Runner 对每个 Run 拒绝重复 `command_id`。任何失败不得留下部分账本、Run 或 Artifact 更新。
 
 ## 验证
 

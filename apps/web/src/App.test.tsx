@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 
 import App from "./App";
@@ -11,17 +11,69 @@ const scaffold = {
   stages: [{ id: "prd", title: "产品规格设计", description: "编制 PRD。", implemented: false }],
 };
 
+const proposals = [
+  ["role", "谁使用？", "administrator", "管理员"],
+  ["workflow", "主要流程是什么？", "single_step", "单步骤流程"],
+  ["permission", "如何限制权限？", "role_based", "按角色限制"],
+  ["failure", "失败时如何处理？", "stop", "停止并提示错误"],
+  ["acceptance", "如何验收？", "testable", "使用可验证的验收条件"],
+].map(([dimension, question, optionId, label]) => ({
+  question_id: `gap-${dimension}`,
+  gap_id: `gap-${dimension}`,
+  question,
+  options: [
+    { option_id: optionId, label },
+    { option_id: `${optionId}-other`, label: `其他 ${label}` },
+  ],
+  recommended_option_id: optionId,
+  recommendation_reason: "仅供参考，等待用户明确选择。",
+}));
+
 function run(status: string) {
+  const awaiting = status === "awaiting_clarification";
   const base = {
     run_id: "run-1",
     requirement: "做一个问候页面",
     status,
-    prd_draft: { revision: 1, content: "# PRD\n问候页面" },
+    prd_draft: awaiting ? null : { revision: 1, content: "# PRD\n问候页面" },
     prd_approval: null,
     td_draft: null,
     td_approval: null,
     delivery_spec: null,
-    available_commands: ["approve_prd"],
+    available_commands: awaiting ? ["submit_clarification"] : ["approve_prd"],
+    ledger: {
+      revision: awaiting ? 1 : 2,
+      facts: awaiting
+        ? [{ fact_id: "source-1", kind: "fact", dimension: null, claim: "做一个问候页面" }]
+        : [
+          { fact_id: "source-1", kind: "fact", dimension: null, claim: "做一个问候页面" },
+          ...proposals.map((proposal) => ({
+            fact_id: `decision-${proposal.gap_id}`,
+            kind: "decision",
+            dimension: proposal.gap_id.slice(4),
+            claim: proposal.options[0].label,
+          })),
+        ],
+    },
+    completeness: {
+      ledger_revision: awaiting ? 1 : 2,
+      is_complete: !awaiting,
+      gaps: awaiting ? proposals.map((proposal) => ({
+        gap_id: proposal.gap_id,
+        dimension: proposal.gap_id.slice(4),
+        blocking: true,
+        reason: "缺少信息",
+        ledger_revision: 1,
+      })) : [],
+    },
+    clarification_batch: awaiting ? {
+      batch_id: "batch-1",
+      revision: 1,
+      ledger_revision: 1,
+      gap_ids: proposals.map((proposal) => proposal.gap_id),
+      blocking_gap_ids: proposals.map((proposal) => proposal.gap_id),
+      proposals,
+    } : null,
     source_snapshot: {
       source: { source_type: "inline_requirement", path: null },
       normalized_path: null,
@@ -85,12 +137,16 @@ afterEach(() => {
 });
 
 test("runs the PRD-first happy path from API-projected state", async () => {
-  let current = run("prd_awaiting_approval");
+  let current = run("awaiting_clarification");
   const fetcher = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
     if (path === "/api/health") return json({ status: "ok", service: "speccraft-project-scaffold" });
     if (path === "/api/scaffold") return json(scaffold);
     if (path === "/api/runs" && init?.method === "POST") return json(current, 201);
+    if (path.endsWith("/clarifications/answers")) {
+      current = run("prd_awaiting_approval");
+      return json(current);
+    }
     if (path.endsWith("/approvals/prd")) {
       current = run("td_awaiting_approval");
       return json(current);
@@ -107,8 +163,8 @@ test("runs the PRD-first happy path from API-projected state", async () => {
   expect(await screen.findByText("API 已连接")).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("一句话需求"), { target: { value: "做一个问候页面" } });
   fireEvent.click(screen.getByRole("button", { name: "创建 Run" }));
-  expect(await screen.findByText("等待 PRD 人工审批")).toBeInTheDocument();
-  expect(screen.getByText("# PRD 问候页面")).toBeInTheDocument();
+  expect(await screen.findByText("等待用户澄清需求")).toBeInTheDocument();
+  expect(screen.queryByText("# PRD 问候页面")).not.toBeInTheDocument();
   expect(screen.getByText("只读工程上下文 · guide_only")).toBeInTheDocument();
   expect(screen.getByText("AGENTS.md")).toBeInTheDocument();
   expect(screen.getByText(/repository guide supplies engineering constraints/)).toBeInTheDocument();
@@ -116,6 +172,22 @@ test("runs the PRD-first happy path from API-projected state", async () => {
   expect(fetcher).toHaveBeenCalledWith("/api/runs", expect.objectContaining({
     method: "POST",
     body: JSON.stringify({ requirement: "做一个问候页面" }),
+  }));
+
+  const submitAnswers = screen.getByRole("button", { name: "提交澄清回答" });
+  expect(submitAnswers).toBeDisabled();
+  for (const proposal of proposals) {
+    const group = screen.getByRole("group", { name: proposal.question });
+    fireEvent.click(within(group).getAllByRole("radio")[0]);
+  }
+  expect(submitAnswers).toBeEnabled();
+  fireEvent.click(submitAnswers);
+  expect(await screen.findByText("等待 PRD 人工审批")).toBeInTheDocument();
+  expect(screen.getByText("# PRD 问候页面")).toBeInTheDocument();
+  const answerCall = fetcher.mock.calls.find(([input]) => String(input).endsWith("/clarifications/answers"));
+  expect(answerCall?.[1]).toEqual(expect.objectContaining({
+    method: "POST",
+    body: expect.stringContaining('"command_id":"run-1:clarification:1"'),
   }));
 
   fireEvent.click(screen.getByRole("button", { name: "批准 PRD" }));
@@ -135,7 +207,8 @@ test("keeps the last server state when an approval is rejected", async () => {
     const path = String(input);
     if (path === "/api/health") return json({ status: "ok", service: "speccraft-project-scaffold" });
     if (path === "/api/scaffold") return json(scaffold);
-    if (path === "/api/runs" && init?.method === "POST") return json(run("prd_awaiting_approval"), 201);
+    if (path === "/api/runs" && init?.method === "POST") return json(run("awaiting_clarification"), 201);
+    if (path.endsWith("/clarifications/answers")) return json({ detail: { code: "invalid_clarification" } }, 422);
     if (path.endsWith("/approvals/prd")) return json({ detail: { code: "invalid_transition" } }, 409);
     return json(run("prd_awaiting_approval"));
   });
@@ -145,11 +218,21 @@ test("keeps the last server state when an approval is rejected", async () => {
   expect(await screen.findByText("API 已连接")).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("一句话需求"), { target: { value: "做一个问候页面" } });
   fireEvent.click(screen.getByRole("button", { name: "创建 Run" }));
-  expect(await screen.findByText("等待 PRD 人工审批")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "批准 PRD" }));
+  expect(await screen.findByText("等待用户澄清需求")).toBeInTheDocument();
+  fireEvent.change(screen.getByRole("textbox", { name: `自定义回答：${proposals[0].question}` }), {
+    target: { value: "由项目管理员负责" },
+  });
+  for (const proposal of proposals.slice(1)) {
+    const group = screen.getByRole("group", { name: proposal.question });
+    fireEvent.click(within(group).getAllByRole("radio")[0]);
+  }
+  fireEvent.click(screen.getByRole("button", { name: "提交澄清回答" }));
 
-  expect(await screen.findByText(/请求失败：409/)).toBeInTheDocument();
-  expect(screen.getByText("等待 PRD 人工审批")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "批准 PRD" })).toBeInTheDocument();
-  await waitFor(() => expect(screen.queryByText("等待 TD 人工审批")).not.toBeInTheDocument());
+  expect(await screen.findByText(/请求失败：422/)).toBeInTheDocument();
+  expect(fetcher).toHaveBeenCalledWith("/api/runs/run-1/clarifications/answers", expect.objectContaining({
+    body: expect.stringContaining('"custom_answer":"由项目管理员负责"'),
+  }));
+  expect(screen.getByText("等待用户澄清需求")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "提交澄清回答" })).toBeInTheDocument();
+  await waitFor(() => expect(screen.queryByText("等待 PRD 人工审批")).not.toBeInTheDocument());
 });

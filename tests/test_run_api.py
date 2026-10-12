@@ -5,6 +5,32 @@ from apps.api.main import app
 client = TestClient(app)
 
 
+def answer_all_clarifications(created: dict) -> dict:
+    batch = created["clarification_batch"]
+    response = client.post(
+        f"/api/runs/{created['run_id']}/clarifications/answers",
+        json={
+            "expected_revision": created["ledger"]["revision"],
+            "command_id": "run-api-test-command",
+            "answers": [
+                {
+                    "question_id": proposal["question_id"],
+                    "selected_option_id": proposal["options"][0]["option_id"],
+                }
+                for proposal in batch["proposals"]
+                if proposal["gap_id"] in batch["blocking_gap_ids"]
+            ],
+        },
+    )
+    assert response.status_code == 200
+    return response.json()
+
+
+def create_prd_ready_run(requirement: str) -> dict:
+    waiting = client.post("/api/runs", json={"requirement": requirement}).json()
+    return answer_all_clarifications(waiting)
+
+
 def test_run_api_happy_path_returns_each_server_owned_state() -> None:
     created_response = client.post(
         "/api/runs",
@@ -14,13 +40,19 @@ def test_run_api_happy_path_returns_each_server_owned_state() -> None:
     assert created_response.status_code == 201
     created = created_response.json()
     run_id = created["run_id"]
-    assert created["status"] == "prd_awaiting_approval"
+    assert created["status"] == "awaiting_clarification"
+    assert created["prd_draft"] is None
+    assert created["clarification_batch"] is not None
     assert created["td_draft"] is None
     assert created["delivery_spec"] is None
 
     read_response = client.get(f"/api/runs/{run_id}")
     assert read_response.status_code == 200
     assert read_response.json() == created
+
+    created = answer_all_clarifications(created)
+    assert created["status"] == "prd_awaiting_approval"
+    assert created["prd_draft"] is not None
 
     prd_response = client.post(
         f"/api/runs/{run_id}/approvals/prd",
@@ -62,9 +94,7 @@ def test_td_approval_before_prd_is_rejected_without_state_change() -> None:
 
 
 def test_stale_revision_is_rejected_without_state_change() -> None:
-    created = client.post(
-        "/api/runs", json={"requirement": "导出大文件时显示进度。"}
-    ).json()
+    created = create_prd_ready_run("导出大文件时显示进度。")
     run_id = created["run_id"]
 
     response = client.post(
@@ -78,9 +108,7 @@ def test_stale_revision_is_rejected_without_state_change() -> None:
 
 
 def test_stale_td_revision_is_rejected_without_state_change() -> None:
-    created = client.post(
-        "/api/runs", json={"requirement": "导出大文件时显示进度。"}
-    ).json()
+    created = create_prd_ready_run("导出大文件时显示进度。")
     run_id = created["run_id"]
     awaiting_td = client.post(
         f"/api/runs/{run_id}/approvals/prd", json={"revision": 1}
@@ -97,9 +125,7 @@ def test_stale_td_revision_is_rejected_without_state_change() -> None:
 
 
 def test_repeated_approval_is_rejected_and_run_remains_unchanged() -> None:
-    created = client.post(
-        "/api/runs", json={"requirement": "导出大文件时显示进度。"}
-    ).json()
+    created = create_prd_ready_run("导出大文件时显示进度。")
     run_id = created["run_id"]
     url = f"/api/runs/{run_id}/approvals/prd"
     body = {"revision": created["prd_draft"]["revision"]}
@@ -114,9 +140,7 @@ def test_repeated_approval_is_rejected_and_run_remains_unchanged() -> None:
 
 
 def test_repeated_td_approval_is_rejected_and_completed_run_remains_unchanged() -> None:
-    created = client.post(
-        "/api/runs", json={"requirement": "导出大文件时显示进度。"}
-    ).json()
+    created = create_prd_ready_run("导出大文件时显示进度。")
     run_id = created["run_id"]
     client.post(f"/api/runs/{run_id}/approvals/prd", json={"revision": 1})
     url = f"/api/runs/{run_id}/approvals/td"

@@ -11,15 +11,23 @@ from deliveryflow_contracts.context import (
     RepositoryBinding,
     SourceSnapshot,
 )
+from deliveryflow_contracts.facts import (
+    ClarificationBatch,
+    CompletenessResult,
+    FactKind,
+    FactLedger,
+)
 
 
 class RunStatus(StrEnum):
+    AWAITING_CLARIFICATION = "awaiting_clarification"
     PRD_AWAITING_APPROVAL = "prd_awaiting_approval"
     TD_AWAITING_APPROVAL = "td_awaiting_approval"
     COMPLETED = "completed"
 
 
 class AvailableCommand(StrEnum):
+    SUBMIT_CLARIFICATION = "submit_clarification"
     APPROVE_PRD = "approve_prd"
     APPROVE_TD = "approve_td"
 
@@ -76,7 +84,7 @@ class RunResponse(BaseModel):
     run_id: str = Field(min_length=1)
     requirement: str = Field(min_length=1)
     status: RunStatus
-    prd_draft: DraftArtifact
+    prd_draft: DraftArtifact | None = None
     prd_approval: Approval | None = None
     td_draft: DraftArtifact | None = None
     td_approval: Approval | None = None
@@ -85,34 +93,72 @@ class RunResponse(BaseModel):
     source_snapshot: SourceSnapshot
     repository_binding: RepositoryBinding
     harness_context: HarnessContextSlice
+    ledger: FactLedger
+    completeness: CompletenessResult
+    clarification_batch: ClarificationBatch | None = None
 
     @model_validator(mode="after")
     def validate_state_projection(self) -> "RunResponse":
-        if self.status is RunStatus.PRD_AWAITING_APPROVAL:
+        captured_sources = (
+            self.source_snapshot,
+            *(entry.snapshot for entry in self.harness_context.entries),
+        )
+        for fact in self.ledger.facts:
+            if fact.kind is FactKind.FACT and fact.source is not None and not any(
+                snapshot.sha256 == fact.source.sha256
+                and fact.source.excerpt in snapshot.content
+                for snapshot in captured_sources
+            ):
+                raise ValueError("source evidence must match a captured snapshot")
+
+        if self.ledger.revision != self.completeness.ledger_revision:
+            raise ValueError("completeness must describe the current Fact Ledger revision")
+
+        if self.status is RunStatus.AWAITING_CLARIFICATION:
             valid = (
-                self.prd_approval is None
+                self.prd_draft is None
+                and self.prd_approval is None
                 and self.td_draft is None
                 and self.td_approval is None
                 and self.delivery_spec is None
+                and not self.completeness.is_complete
+                and self.clarification_batch is not None
+                and self.clarification_batch.ledger_revision == self.ledger.revision
+                and set(self.clarification_batch.blocking_gap_ids)
+                == {gap.gap_id for gap in self.completeness.gaps if gap.blocking}
+                and self.available_commands == (AvailableCommand.SUBMIT_CLARIFICATION,)
+            )
+        elif self.status is RunStatus.PRD_AWAITING_APPROVAL:
+            valid = (
+                self.prd_draft is not None
+                and self.prd_approval is None
+                and self.td_draft is None
+                and self.td_approval is None
+                and self.delivery_spec is None
+                and self.completeness.is_complete
                 and self.available_commands == (AvailableCommand.APPROVE_PRD,)
             )
         elif self.status is RunStatus.TD_AWAITING_APPROVAL:
             valid = (
-                self.prd_approval is not None
+                self.prd_draft is not None
+                and self.prd_approval is not None
                 and self.prd_approval.revision == self.prd_draft.revision
                 and self.td_draft is not None
                 and self.td_approval is None
                 and self.delivery_spec is None
+                and self.completeness.is_complete
                 and self.available_commands == (AvailableCommand.APPROVE_TD,)
             )
         else:
             valid = (
-                self.prd_approval is not None
+                self.prd_draft is not None
+                and self.prd_approval is not None
                 and self.prd_approval.revision == self.prd_draft.revision
                 and self.td_draft is not None
                 and self.td_approval is not None
                 and self.td_approval.revision == self.td_draft.revision
                 and self.delivery_spec is not None
+                and self.completeness.is_complete
                 and self.available_commands == ()
             )
 
@@ -121,6 +167,7 @@ class RunResponse(BaseModel):
 
         if self.delivery_spec is not None and (
             self.delivery_spec.run_id != self.run_id
+            or self.prd_draft is None
             or self.delivery_spec.prd_revision != self.prd_draft.revision
             or self.delivery_spec.prd_content != self.prd_draft.content
             or self.td_draft is None

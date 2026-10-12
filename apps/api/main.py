@@ -2,6 +2,7 @@ from pathlib import Path as FilePath
 from typing import Annotated, Literal
 
 from deliveryflow_contracts.context import HarnessErrorCode
+from deliveryflow_contracts.facts import SubmitClarificationRequest
 from deliveryflow_contracts.runs import (
     ApprovalRequest,
     CreateRunRequest,
@@ -12,7 +13,9 @@ from deliveryflow_speccraft.repository_context import (
     RepositoryHarness,
 )
 from deliveryflow_speccraft.runner import (
+    DuplicateCommand,
     InMemoryRunner,
+    InvalidClarification,
     InvalidRunTransition,
     RevisionConflict,
     RunNotFound,
@@ -94,7 +97,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -113,7 +116,7 @@ def read_scaffold() -> ScaffoldResponse:
             "React 与 FastAPI 最小链路",
             "Python 多包边界",
             "匿名需求与目标仓库样例",
-            "进程内存 Run、确定性 Fake Provider 与 PRD-first 人工审批 Happy Path",
+            "进程内存 Run、Fact Ledger、澄清 Gate 与 PRD-first 人工审批 Happy Path",
         ],
         deferred_capabilities=[
             "真实 LLM Provider 与模型调用",
@@ -153,6 +156,42 @@ def read_run(run_id: RunIdPath) -> RunResponse:
         raise HTTPException(
             status_code=404,
             detail={"code": "run_not_found"},
+        ) from error
+
+
+@app.post(
+    "/api/runs/{run_id}/clarifications/answers",
+    response_model=RunResponse,
+)
+def submit_clarification(
+    run_id: RunIdPath, request: SubmitClarificationRequest
+) -> RunResponse:
+    try:
+        return runner.submit_clarification(run_id, request)
+    except RunNotFound as error:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "run_not_found"},
+        ) from error
+    except RevisionConflict as error:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "revision_conflict"},
+        ) from error
+    except DuplicateCommand as error:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "duplicate_command"},
+        ) from error
+    except InvalidRunTransition as error:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "invalid_run_transition"},
+        ) from error
+    except InvalidClarification as error:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_clarification"},
         ) from error
 
 
