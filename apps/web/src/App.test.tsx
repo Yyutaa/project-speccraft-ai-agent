@@ -130,6 +130,12 @@ function json(body: unknown, status = 200) {
   return Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }));
 }
 
+async function chooseAnswer(question: string, answer: string) {
+  const group = screen.getByRole("group", { name: question });
+  fireEvent.mouseDown(within(group).getByRole("combobox"));
+  fireEvent.click(await screen.findByRole("option", { name: answer }));
+}
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -176,9 +182,12 @@ test("runs the PRD-first happy path from API-projected state", async () => {
 
   const submitAnswers = screen.getByRole("button", { name: "提交澄清回答" });
   expect(submitAnswers).toBeDisabled();
+  const firstQuestionGroup = screen.getByRole("group", { name: proposals[0].question });
+  expect(within(firstQuestionGroup).getByRole("combobox")).toHaveAttribute("aria-expanded", "false");
+  expect(within(firstQuestionGroup).getByText("请选择答案")).toBeInTheDocument();
+  expect(screen.queryByRole("textbox", { name: `自定义回答：${proposals[0].question}` })).not.toBeInTheDocument();
   for (const proposal of proposals) {
-    const group = screen.getByRole("group", { name: proposal.question });
-    fireEvent.click(within(group).getAllByRole("radio")[0]);
+    await chooseAnswer(proposal.question, `推荐：${proposal.options[0].label}`);
   }
   expect(submitAnswers).toBeEnabled();
   fireEvent.click(submitAnswers);
@@ -219,12 +228,18 @@ test("keeps the last server state when an approval is rejected", async () => {
   fireEvent.change(screen.getByLabelText("一句话需求"), { target: { value: "做一个问候页面" } });
   fireEvent.click(screen.getByRole("button", { name: "创建 Run" }));
   expect(await screen.findByText("等待用户澄清需求")).toBeInTheDocument();
+  await chooseAnswer(proposals[0].question, "其他，自定义回答");
+  const customAnswer = screen.getByRole("textbox", { name: `自定义回答：${proposals[0].question}` });
+  fireEvent.change(customAnswer, { target: { value: "由项目管理员负责" } });
+  await chooseAnswer(proposals[0].question, `推荐：${proposals[0].options[0].label}`);
+  expect(screen.queryByRole("textbox", { name: `自定义回答：${proposals[0].question}` })).not.toBeInTheDocument();
+  await chooseAnswer(proposals[0].question, "其他，自定义回答");
+  expect(screen.getByRole("textbox", { name: `自定义回答：${proposals[0].question}` })).toHaveValue("");
   fireEvent.change(screen.getByRole("textbox", { name: `自定义回答：${proposals[0].question}` }), {
     target: { value: "由项目管理员负责" },
   });
   for (const proposal of proposals.slice(1)) {
-    const group = screen.getByRole("group", { name: proposal.question });
-    fireEvent.click(within(group).getAllByRole("radio")[0]);
+    await chooseAnswer(proposal.question, `推荐：${proposal.options[0].label}`);
   }
   fireEvent.click(screen.getByRole("button", { name: "提交澄清回答" }));
 
@@ -235,4 +250,50 @@ test("keeps the last server state when an approval is rejected", async () => {
   expect(screen.getByText("等待用户澄清需求")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "提交澄清回答" })).toBeInTheDocument();
   await waitFor(() => expect(screen.queryByText("等待 PRD 人工审批")).not.toBeInTheDocument());
+});
+
+test("creates a run from an allowed repository requirement path", async () => {
+  const fetcher = vi.fn((input: RequestInfo | URL) => {
+    if (String(input) === "/api/health") return json({ status: "ok", service: "speccraft-project-scaffold" });
+    if (String(input) === "/api/scaffold") return json(scaffold);
+    return json(run("awaiting_clarification"), 201);
+  });
+  installApi(fetcher as typeof fetch);
+  render(<App />);
+
+  expect(await screen.findByText("API 已连接")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("radio", { name: "仓库内需求文件" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "仓库内需求文件路径" }), {
+    target: { value: "requirements/large-excel-import.md" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "创建 Run" }));
+
+  expect(await screen.findByText("run-1", { selector: ".run-id" })).toBeInTheDocument();
+  expect(fetcher).toHaveBeenCalledWith("/api/runs", expect.objectContaining({
+    method: "POST",
+    body: JSON.stringify({ requirement_path: "requirements/large-excel-import.md" }),
+  }));
+});
+
+test("opens an existing run by ID and keeps the current run after a read error", async () => {
+  const fetcher = vi.fn((input: RequestInfo | URL) => {
+    const path = String(input);
+    if (path === "/api/health") return json({ status: "ok", service: "speccraft-project-scaffold" });
+    if (path === "/api/scaffold") return json(scaffold);
+    if (path === "/api/runs/run-1") return json(run("prd_awaiting_approval"));
+    return json({ detail: { code: "run_not_found" } }, 404);
+  });
+  installApi(fetcher as typeof fetch);
+  render(<App />);
+
+  expect(await screen.findByText("API 已连接")).toBeInTheDocument();
+  fireEvent.change(screen.getByRole("textbox", { name: "Run ID" }), { target: { value: "run-1" } });
+  fireEvent.click(screen.getByRole("button", { name: "打开 Run" }));
+  expect(await screen.findByText("# PRD 问候页面")).toBeInTheDocument();
+  expect(fetcher).toHaveBeenCalledWith("/api/runs/run-1", undefined);
+
+  fireEvent.change(screen.getByRole("textbox", { name: "Run ID" }), { target: { value: "missing" } });
+  fireEvent.click(screen.getByRole("button", { name: "打开 Run" }));
+  expect(await screen.findByText(/请求失败：404/)).toBeInTheDocument();
+  expect(screen.getByText("# PRD 问候页面")).toBeInTheDocument();
 });

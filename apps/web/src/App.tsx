@@ -1,5 +1,5 @@
-import { CheckCircleOutlined, ClockCircleOutlined } from "@ant-design/icons";
-import { Alert, Button, Card, ConfigProvider, Input, Radio, Spin, Tag } from "antd";
+import { CheckCircleOutlined, ClockCircleOutlined, FolderOpenOutlined, PlusOutlined } from "@ant-design/icons";
+import { Alert, Button, Card, ConfigProvider, Input, Radio, Select, Spin, Tag } from "antd";
 import { useEffect, useState } from "react";
 
 import { api, ClarificationAnswer, Run, Scaffold } from "./api";
@@ -11,10 +11,20 @@ const statusLabels: Record<Run["status"], string> = {
   completed: "已完成",
 };
 
+const customAnswerOption = "__custom_answer__";
+
+const commandLabels: Record<Run["available_commands"][number], string> = {
+  submit_clarification: "提交需求澄清",
+  approve_prd: "审阅并批准 PRD",
+  approve_td: "审阅并批准 TD",
+};
 
 export default function App() {
   const [scaffold, setScaffold] = useState<Scaffold | null>(null);
   const [requirement, setRequirement] = useState("");
+  const [sourceMode, setSourceMode] = useState<"inline" | "file">("inline");
+  const [requirementPath, setRequirementPath] = useState("");
+  const [openRunId, setOpenRunId] = useState("");
   const [run, setRun] = useState<Run | null>(null);
   const [answers, setAnswers] = useState<Record<string, {
     selectedOptionId?: string;
@@ -50,8 +60,10 @@ export default function App() {
   ) ?? [];
   const clarificationAnswers = blockingProposals.flatMap<ClarificationAnswer>((proposal) => {
     const answer = answers[proposal.question_id];
-    if (answer?.customAnswer?.trim()) {
-      return [{ question_id: proposal.question_id, custom_answer: answer.customAnswer.trim() }];
+    if (answer?.selectedOptionId === customAnswerOption) {
+      return answer.customAnswer?.trim()
+        ? [{ question_id: proposal.question_id, custom_answer: answer.customAnswer.trim() }]
+        : [];
     }
     if (answer?.selectedOptionId) {
       return [{ question_id: proposal.question_id, selected_option_id: answer.selectedOptionId }];
@@ -60,185 +72,208 @@ export default function App() {
   });
   const canSubmitClarification = blockingProposals.length > 0
     && clarificationAnswers.length === blockingProposals.length;
+  const canCreate = sourceMode === "inline" ? Boolean(requirement.trim()) : Boolean(requirementPath.trim());
 
   return (
     <ConfigProvider
       theme={{
         token: {
-          colorPrimary: "#073d35",
-          borderRadius: 4,
-          colorText: "#1f2423",
+          colorPrimary: "#202523",
+          borderRadius: 3,
+          colorText: "#202523",
         },
       }}
     >
-      <header className="site-header">
-        <strong>SpecCraft</strong>
-        <Tag>Project scaffold</Tag>
-      </header>
+      <header className="site-header"><span className="brand-mark">DF</span><strong>DeliveryFlow / SpecCraft</strong></header>
       <main>
-        <section className="hero">
-          <p className="eyebrow">个人开发项目</p>
-          <h1>构建本地优先的 AI 规格编制工具</h1>
-          <p className="hero-copy">
-            先确认关键需求事实，再审阅并批准 PRD、TD，最后生成 DeliverySpec。数据仍保存在进程内，真实模型和完整工作流尚未实现。
-          </p>
-          {error ? (
-            <Alert type="error" showIcon message="API 未连接" description={error} />
-          ) : scaffold ? (
-            <div className="connection-status">
-              <CheckCircleOutlined /> API 已连接
-            </div>
-          ) : (
-            <div className="connection-status pending"><Spin size="small" /> 正在连接 API</div>
-          )}
+        <section className="hero" aria-labelledby="page-title">
+          <div><h1 id="page-title">从需求澄清到可审阅规格</h1><p className="hero-copy">输入需求，确认关键决定，再分别批准 PRD 与 TD。</p></div>
+          <aside className="runtime-note">
+            {error ? <Alert type="error" showIcon message="API 未连接" description={error} /> : scaffold ? (
+              <p className="connection-status"><CheckCircleOutlined /> API 已连接</p>
+            ) : <div className="connection-status pending"><Spin size="small" /> 正在连接 API</div>}
+            <p>进程内演示 · 服务重启后 Run 消失</p>
+          </aside>
         </section>
 
         {scaffold && (
           <>
-            <section aria-labelledby="run-title" className="run-section">
-              <div className="section-heading">
-                <div>
-                  <p className="eyebrow">In-memory demonstration</p>
-                  <h2 id="run-title">跑通规格审批</h2>
-                </div>
-                <p>草稿由确定性 Fake Provider 生成；审批由你明确提交。</p>
-              </div>
-              <Card>
-                <label htmlFor="requirement">一句话需求</label>
-                <Input.TextArea
-                  id="requirement"
-                  aria-label="一句话需求"
-                  value={requirement}
-                  onChange={(event) => setRequirement(event.target.value)}
-                  placeholder="描述你希望构建的产品"
-                  rows={3}
-                  disabled={busy || run !== null}
+            <section className="workspace-grid" aria-label="Run 工作台">
+              <Card className="workspace-card" title={<><PlusOutlined /> 新建 Spec Run</>}>
+                <label className="field-label">需求来源</label>
+                <Radio.Group aria-label="需求来源" value={sourceMode} disabled={busy}
+                  onChange={(event) => setSourceMode(event.target.value)}
+                  options={[{ label: "直接输入", value: "inline" }, { label: "仓库内需求文件", value: "file" }]}
                 />
-                {!run && (
-                  <Button
-                    type="primary"
-                    className="run-action"
-                    disabled={!requirement.trim()}
-                    loading={busy}
-                    onClick={() => void perform(() => api.createRun(requirement))}
-                  >创建 Run</Button>
+                {sourceMode === "inline" ? (
+                  <div className="source-field">
+                    <label className="field-label" htmlFor="requirement">一句话需求</label>
+                    <Input.TextArea id="requirement" aria-label="一句话需求" value={requirement}
+                      onChange={(event) => setRequirement(event.target.value)}
+                      placeholder="描述业务目标、使用者和预期结果" rows={5} disabled={busy} />
+                  </div>
+                ) : (
+                  <div className="source-field">
+                    <label className="field-label" htmlFor="requirement-path">仓库内需求文件路径</label>
+                    <Input id="requirement-path" aria-label="仓库内需求文件路径" value={requirementPath}
+                      onChange={(event) => setRequirementPath(event.target.value)}
+                      placeholder="例如 requirements/large-excel-import.md" disabled={busy} />
+                    <p className="field-help">填写服务端允许的仓库内相对路径；这里不上传文件。</p>
+                  </div>
                 )}
+                <Button type="primary" className="run-action" disabled={!canCreate} loading={busy}
+                  onClick={() => void perform(() => api.createRun(sourceMode === "inline"
+                    ? { requirement: requirement.trim() }
+                    : { requirement_path: requirementPath.trim() }))}>创建 Run</Button>
+              </Card>
+              <Card className="workspace-card current-run-card" title={<><FolderOpenOutlined /> 当前 Run</>}>
+                {run ? <div className="current-run-summary">
+                  <span className="meta-label">当前状态</span><Tag>{statusLabels[run.status]}</Tag>
+                  <span className="meta-label">Run ID</span><code className="run-id">{run.run_id}</code>
+                  <span className="meta-label">需求</span><p>{run.requirement}</p>
+                  <span className="meta-label">下一项操作</span>
+                  <p>{run.available_commands.map((command) => commandLabels[command]).join("、") || "没有待执行命令"}</p>
+                  <a href="#run-detail">查看 Run 详情</a>
+                </div> : <div className="empty-run"><strong>尚未打开 Run</strong><p>创建 Run 后，这里会显示状态和下一项需要你处理的操作。</p></div>}
                 {runError && <Alert className="run-error" type="error" showIcon title={runError} />}
-                {run && (
-                  <div className="run-result" aria-live="polite">
-                    <div className="run-status">
-                      <span>Run {run.run_id}</span>
-                      <Tag>{statusLabels[run.status]}</Tag>
-                    </div>
-                    <article aria-label="来源与只读工程上下文">
-                      <h3>来源与只读工程上下文</h3>
-                      <p>需求来源：{run.source_snapshot.normalized_path ?? "用户内联输入"}</p>
-                      <code>需求 SHA-256 {run.source_snapshot.sha256}</code>
-                      <p>仓库：{run.repository_binding.repository_id} · {run.repository_binding.permission}</p>
-                      <p>只读工程上下文 · {run.repository_binding.context_mode}</p>
-                      <code>上下文 SHA-256 {run.harness_context.sha256}</code>
-                      <ul>
-                        {run.harness_context.entries.map((entry) => (
-                          <li key={entry.snapshot.normalized_path}>
-                            <strong>{entry.snapshot.normalized_path}</strong>: {entry.selection_reason}
-                            <br />
-                            <code>SHA-256 {entry.snapshot.sha256}</code>
-                          </li>
-                        ))}
-                      </ul>
-                    </article>
-                    <article aria-label="权威事实账本">
-                      <h3>权威事实账本 · r{run.ledger.revision}</h3>
-                      <ul>{run.ledger.facts.map((fact) => (
-                        <li key={fact.fact_id}>
-                          <Tag>{fact.kind === "decision" ? "用户决定" : "来源事实"}</Tag>{fact.claim}
-                        </li>
-                      ))}</ul>
-                    </article>
-                    {run.status === "awaiting_clarification" && run.clarification_batch && (
-                      <article aria-label="需求澄清">
-                        <h3>需求信息待确认</h3>
-                        <p>推荐项只供参考，不会自动选中。提交后，明确答案才会记为用户决定。</p>
-                        {blockingProposals.map((proposal) => (
-                          <fieldset className="clarification-question" key={proposal.question_id} disabled={busy}>
-                            <legend>{proposal.question}</legend>
-                            <Radio.Group
-                              aria-label={proposal.question}
-                              value={answers[proposal.question_id]?.selectedOptionId}
-                              onChange={(event) => setAnswers((current) => ({
-                                ...current,
-                                [proposal.question_id]: { selectedOptionId: event.target.value },
-                              }))}
-                            >
-                              {proposal.options.map((option) => (
-                                <Radio key={option.option_id} value={option.option_id}>
-                                  {option.label}{proposal.recommended_option_id === option.option_id && <Tag>推荐</Tag>}
-                                </Radio>
-                              ))}
-                            </Radio.Group>
-                            {proposal.recommendation_reason && <p>Agent 推荐依据：{proposal.recommendation_reason}</p>}
+              </Card>
+            </section>
+            <section className="open-run-bar" aria-label="打开已有 Run">
+              <label htmlFor="open-run-id">打开已有 Run</label>
+              <Input id="open-run-id" aria-label="Run ID" value={openRunId}
+                onChange={(event) => setOpenRunId(event.target.value)} placeholder="输入 Run ID" disabled={busy} />
+              <Button disabled={!openRunId.trim()} loading={busy}
+                onClick={() => void perform(() => api.readRun(openRunId.trim()))}>打开 Run</Button>
+            </section>
+            {run && <section id="run-detail" className="run-detail" aria-label="Run 工作区">
+              <div className="section-heading"><h2>Run 工作区</h2><p>内容和可用操作来自服务端当前响应。</p></div>
+              <div className="run-result" aria-live="polite">
+                <div className="run-status">
+                  <span>Run {run.run_id}</span>
+                  <span>当前服务端状态 · {statusLabels[run.status]}</span>
+                </div>
+                <div className="detail-grid"><div className="action-panel"><h3>需要你处理</h3>
+                  {run.status === "awaiting_clarification" && run.clarification_batch && (
+                    <article aria-label="需求澄清">
+                      <h3>需求信息待确认</h3>
+                      <p>推荐项只供参考，不会自动选中。提交后，明确答案才会记为用户决定。</p>
+                      {blockingProposals.map((proposal) => (
+                        <fieldset className="clarification-question" key={proposal.question_id} disabled={busy}>
+                          <legend>{proposal.question}</legend>
+                          {proposal.recommended_option_id && (
+                            <p className="clarification-recommendation">
+                              <strong>Agent 推荐依据</strong>
+                              <span>{proposal.recommendation_reason}</span>
+                            </p>
+                          )}
+                          <Select
+                            className="clarification-select"
+                            aria-label={proposal.question}
+                            placeholder="请选择答案"
+                            value={answers[proposal.question_id]?.selectedOptionId}
+                            onChange={(selectedOptionId) => setAnswers((current) => ({
+                              ...current,
+                              [proposal.question_id]: { selectedOptionId },
+                            }))}
+                            disabled={busy}
+                            virtual={false}
+                            options={[
+                              ...proposal.options.map((option) => ({
+                                value: option.option_id,
+                                label: proposal.recommended_option_id === option.option_id
+                                  ? `推荐：${option.label}`
+                                  : option.label,
+                              })),
+                              { value: customAnswerOption, label: "其他，自定义回答" },
+                            ]}
+                          />
+                          {answers[proposal.question_id]?.selectedOptionId === customAnswerOption && (
                             <Input
+                              className="clarification-custom-answer"
                               aria-label={`自定义回答：${proposal.question}`}
                               value={answers[proposal.question_id]?.customAnswer ?? ""}
                               onChange={(event) => setAnswers((current) => ({
                                 ...current,
-                                [proposal.question_id]: { customAnswer: event.target.value },
+                                [proposal.question_id]: {
+                                  selectedOptionId: customAnswerOption,
+                                  customAnswer: event.target.value,
+                                },
                               }))}
-                              placeholder="也可以填写自定义答案"
+                              placeholder="请输入自定义答案"
                               disabled={busy}
                             />
-                          </fieldset>
-                        ))}
-                        {run.available_commands.includes("submit_clarification") && (
-                          <Button className="run-action" loading={busy} disabled={!canSubmitClarification}
-                            onClick={() => void perform(() => api.submitClarification(run, clarificationAnswers))}>
-                            提交澄清回答
-                          </Button>
-                        )}
-                      </article>
-                    )}
-                    {!run.prd_draft && <p>需求澄清完成后才会生成 PRD 草稿。</p>}
-                    {run.prd_draft && (
-                      <article>
-                        <h3>PRD 草稿 · r{run.prd_draft.revision}</h3>
-                        <pre>{run.prd_draft.content}</pre>
-                        {run.prd_approval && <p>PRD 已批准 · r{run.prd_approval.revision}</p>}
-                      </article>
-                    )}
-                    {run.td_draft && (
-                      <article>
-                        <h3>TD 草稿 · r{run.td_draft.revision}</h3>
-                        <pre>{run.td_draft.content}</pre>
-                        {run.td_approval && <p>TD 已批准 · r{run.td_approval.revision}</p>}
-                      </article>
-                    )}
-                    {run.delivery_spec && (
-                      <article>
-                        <h3>DeliverySpec</h3>
-                        <pre>{JSON.stringify(run.delivery_spec, null, 2)}</pre>
-                      </article>
-                    )}
-                    {run.available_commands.includes("approve_prd") && (
-                      <Button className="run-action" loading={busy} onClick={() => void perform(() => api.approvePrd(run))}>
-                        批准 PRD
-                      </Button>
-                    )}
-                    {run.available_commands.includes("approve_td") && (
-                      <Button className="run-action" loading={busy} onClick={() => void perform(() => api.approveTd(run))}>
-                        批准 TD
-                      </Button>
-                    )}
-                  </div>
-                )}
-              </Card>
-            </section>
-            <section aria-labelledby="stage-title">
-              <div className="section-heading">
-                <div>
-                  <p className="eyebrow">Product contract</p>
-                  <h2 id="stage-title">八阶段产品路线</h2>
+                          )}
+                        </fieldset>
+                      ))}
+                      {run.available_commands.includes("submit_clarification") && (
+                        <Button
+                          className="run-action"
+                          loading={busy}
+                          disabled={!canSubmitClarification}
+                          onClick={() => void perform(() => api.submitClarification(run, clarificationAnswers))}
+                        >提交澄清回答</Button>
+                      )}
+                    </article>
+                  )}
+                  {run.available_commands.includes("approve_prd") && (
+                    <div className="approval-panel"><p>PRD 草稿已生成，请审阅下方内容后确认。</p>
+                      <a href="#artifacts">查看 PRD 草稿</a>
+                      <Button className="run-action" loading={busy} onClick={() => void perform(() => api.approvePrd(run))}>批准 PRD</Button>
+                    </div>
+                  )}
+                  {run.available_commands.includes("approve_td") && (
+                    <div className="approval-panel"><p>TD 草稿已生成，请审阅下方内容后确认。</p>
+                      <a href="#artifacts">查看 TD 草稿</a>
+                      <Button className="run-action" loading={busy} onClick={() => void perform(() => api.approveTd(run))}>批准 TD</Button>
+                    </div>
+                  )}
+                  {run.status === "completed" && <p>PRD 与 TD 已批准，DeliverySpec 已生成。</p>}
+                </div><div className="evidence-panel"><h3>来源与事实</h3>
+                    <dl className="evidence-summary">
+                      <dt>需求来源</dt><dd>{run.source_snapshot.normalized_path ?? "用户内联输入"}</dd>
+                      <dt>需求 SHA-256</dt><dd><code>{run.source_snapshot.sha256}</code></dd>
+                      <dt>仓库</dt><dd>{run.repository_binding.repository_id} · {run.repository_binding.permission}</dd>
+                      <dt>上下文模式</dt><dd>只读工程上下文 · {run.repository_binding.context_mode}</dd>
+                    </dl>
+                    <details className="evidence-details"><summary>只读工程上下文 · {run.harness_context.entries.length} 份来源</summary>
+                      <code>上下文 SHA-256 {run.harness_context.sha256}</code>
+                      <ul>{run.harness_context.entries.map((entry) => (
+                        <li key={entry.snapshot.normalized_path}><strong>{entry.snapshot.normalized_path}</strong>: {entry.selection_reason}<br /><code>SHA-256 {entry.snapshot.sha256}</code></li>
+                      ))}</ul>
+                    </details>
+                    <details className="evidence-details"><summary>权威事实账本 · r{run.ledger.revision}</summary>
+                      <ul>{run.ledger.facts.map((fact) => <li key={fact.fact_id}><Tag>{fact.kind === "decision" ? "用户决定" : "来源事实"}</Tag>{fact.claim}</li>)}</ul>
+                    </details>
+                  </div></div>
+                <div id="artifacts" className="artifact-panel"><h3>规格产物</h3>
+                  {!run.prd_draft && <p>需求澄清完成后才会生成 PRD 草稿。</p>}
+                  {run.prd_draft && (
+                    <article>
+                      <h3>PRD 草稿 · r{run.prd_draft.revision}</h3>
+                      <pre>{run.prd_draft.content}</pre>
+                      {run.prd_approval && <p>PRD 已批准 · r{run.prd_approval.revision}</p>}
+                    </article>
+                  )}
+                  {run.td_draft && (
+                    <article>
+                      <h3>TD 草稿 · r{run.td_draft.revision}</h3>
+                      <pre>{run.td_draft.content}</pre>
+                      {run.td_approval && <p>TD 已批准 · r{run.td_approval.revision}</p>}
+                    </article>
+                  )}
+                  {run.delivery_spec && (
+                    <article>
+                      <h3>DeliverySpec</h3>
+                      <pre>{JSON.stringify(run.delivery_spec, null, 2)}</pre>
+                    </article>
+                  )}
                 </div>
-                <p>这些阶段是最终产品形状，不代表脚手架已经实现。</p>
+              </div>
+            </section>}
+            <section className="stage-section" aria-labelledby="stage-title">
+              <div className="section-heading">
+                <h2 id="stage-title">八阶段产品路线</h2>
+                <p>产品契约，不表示当前 Run 进度。</p>
               </div>
               <ol className="stage-grid">
                 {scaffold.stages.map((stage, index) => (
@@ -257,14 +292,12 @@ export default function App() {
               </ol>
             </section>
 
-            <section className="boundary-grid" aria-label="脚手架边界">
-              <Card title="已经保留">
-                <ul>{scaffold.implemented_capabilities.map((item) => <li key={item}>{item}</li>)}</ul>
-              </Card>
-              <Card title="计划实现">
-                <ul>{scaffold.deferred_capabilities.map((item) => <li key={item}>{item}</li>)}</ul>
-              </Card>
-            </section>
+            <details className="boundary-note"><summary>当前能力边界</summary>
+              <div className="boundary-grid">
+                <div><h3>已经保留</h3><ul>{scaffold.implemented_capabilities.map((item) => <li key={item}>{item}</li>)}</ul></div>
+                <div><h3>计划实现</h3><ul>{scaffold.deferred_capabilities.map((item) => <li key={item}>{item}</li>)}</ul></div>
+              </div>
+            </details>
           </>
         )}
       </main>

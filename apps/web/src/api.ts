@@ -119,11 +119,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   health: () => request<Health>("/api/health"),
   scaffold: () => request<Scaffold>("/api/scaffold"),
-  createRun: (requirement: string) => request<Run>("/api/runs", {
+  createRun: (source: { requirement: string } | { requirement_path: string }) => request<Run>("/api/runs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ requirement }),
+    body: JSON.stringify(source),
   }),
+  readRun: (runId: string) => request<Run>(`/api/runs/${encodeURIComponent(runId)}`),
   approvePrd: (run: Run) => request<Run>(`/api/runs/${run.run_id}/approvals/prd`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
