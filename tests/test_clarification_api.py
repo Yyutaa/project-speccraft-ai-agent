@@ -100,7 +100,8 @@ def test_prd_cannot_be_approved_while_clarification_is_pending() -> None:
     waiting, _ = create_waiting_run()
 
     response = client.post(
-        f"/api/runs/{waiting['run_id']}/approvals/prd", json={"revision": 1}
+        f"/api/runs/{waiting['run_id']}/approvals/prd",
+        json={"revision": 1, "content_hash": "0" * 64, "actor": "tester", "rationale": "attempt"},
     )
 
     assert response.status_code == 409

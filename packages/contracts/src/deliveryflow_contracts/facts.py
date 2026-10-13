@@ -81,14 +81,14 @@ class FactLedger(BaseModel):
         return self
 
     @property
-    def authoritative_view(self) -> tuple[str, ...]:
+    def authoritative_facts(self) -> tuple[RequirementFact, ...]:
         decisions = {
             fact.dimension: fact.fact_id
             for fact in self.facts
             if fact.kind is FactKind.DECISION
         }
         return tuple(
-            fact.claim
+            fact
             for fact in self.facts
             if (
                 fact.kind is FactKind.DECISION
@@ -99,6 +99,10 @@ class FactLedger(BaseModel):
                 and (fact.dimension is None or fact.dimension not in decisions)
             )
         )
+
+    @property
+    def authoritative_view(self) -> tuple[str, ...]:
+        return tuple(fact.claim for fact in self.authoritative_facts)
 
 
 class GapSignal(BaseModel):

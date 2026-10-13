@@ -3,6 +3,7 @@ from typing import Annotated, Literal
 
 from deliveryflow_contracts.context import HarnessErrorCode
 from deliveryflow_contracts.facts import SubmitClarificationRequest
+from deliveryflow_contracts.prd import PrdApprovalRequest, PrdRevisionRequest
 from deliveryflow_contracts.runs import (
     ApprovalRequest,
     CreateRunRequest,
@@ -13,10 +14,13 @@ from deliveryflow_speccraft.repository_context import (
     RepositoryHarness,
 )
 from deliveryflow_speccraft.runner import (
+    ContentHashConflict,
     DuplicateCommand,
     InMemoryRunner,
     InvalidClarification,
+    InvalidPrdRevision,
     InvalidRunTransition,
+    PrdNotReady,
     RevisionConflict,
     RunNotFound,
 )
@@ -24,8 +28,10 @@ from fastapi import FastAPI, HTTPException, Path
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-REPOSITORY_ROOT = FilePath(__file__).resolve().parents[2] / "examples/speccraft/repositories/exportflow-sample"
-runner = InMemoryRunner(RepositoryHarness(REPOSITORY_ROOT))
+PROJECT_ROOT = FilePath(__file__).resolve().parents[2]
+REPOSITORY_ROOT = PROJECT_ROOT / "examples/speccraft/repositories/exportflow-sample"
+PRD_AUTHORING_ROOT = PROJECT_ROOT / "learning-assets/authoring-pack/v1/prd"
+runner = InMemoryRunner(RepositoryHarness(REPOSITORY_ROOT), PRD_AUTHORING_ROOT)
 RunIdPath = Annotated[str, Path(min_length=1)]
 
 class HealthResponse(BaseModel):
@@ -195,10 +201,26 @@ def submit_clarification(
         ) from error
 
 
-@app.post("/api/runs/{run_id}/approvals/prd", response_model=RunResponse)
-def approve_prd(run_id: RunIdPath, request: ApprovalRequest) -> RunResponse:
+@app.post("/api/runs/{run_id}/prd/revisions", response_model=RunResponse)
+def revise_prd(run_id: RunIdPath, request: PrdRevisionRequest) -> RunResponse:
     try:
-        return runner.approve_prd(run_id, request.revision)
+        return runner.revise_prd(run_id, request)
+    except RunNotFound as error:
+        raise HTTPException(status_code=404, detail={"code": "run_not_found"}) from error
+    except InvalidRunTransition as error:
+        raise HTTPException(status_code=409, detail={"code": "invalid_run_transition"}) from error
+    except RevisionConflict as error:
+        raise HTTPException(status_code=409, detail={"code": "revision_conflict"}) from error
+    except ContentHashConflict as error:
+        raise HTTPException(status_code=409, detail={"code": "content_hash_conflict"}) from error
+    except InvalidPrdRevision as error:
+        raise HTTPException(status_code=422, detail={"code": "invalid_prd_revision"}) from error
+
+
+@app.post("/api/runs/{run_id}/approvals/prd", response_model=RunResponse)
+def approve_prd(run_id: RunIdPath, request: PrdApprovalRequest) -> RunResponse:
+    try:
+        return runner.approve_prd(run_id, request)
     except RunNotFound as error:
         raise HTTPException(
             status_code=404,
@@ -214,6 +236,10 @@ def approve_prd(run_id: RunIdPath, request: ApprovalRequest) -> RunResponse:
             status_code=409,
             detail={"code": "revision_conflict"},
         ) from error
+    except ContentHashConflict as error:
+        raise HTTPException(status_code=409, detail={"code": "content_hash_conflict"}) from error
+    except PrdNotReady as error:
+        raise HTTPException(status_code=409, detail={"code": "prd_not_ready"}) from error
 
 
 @app.post("/api/runs/{run_id}/approvals/td", response_model=RunResponse)

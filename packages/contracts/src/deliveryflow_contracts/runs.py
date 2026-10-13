@@ -17,6 +17,12 @@ from deliveryflow_contracts.facts import (
     FactKind,
     FactLedger,
 )
+from deliveryflow_contracts.prd import (
+    PrdApprovalReceipt,
+    PrdBlueprint,
+    PrdReadiness,
+    PrdRevision,
+)
 
 
 class RunStatus(StrEnum):
@@ -28,6 +34,7 @@ class RunStatus(StrEnum):
 
 class AvailableCommand(StrEnum):
     SUBMIT_CLARIFICATION = "submit_clarification"
+    REVISE_PRD = "revise_prd"
     APPROVE_PRD = "approve_prd"
     APPROVE_TD = "approve_td"
 
@@ -84,8 +91,11 @@ class RunResponse(BaseModel):
     run_id: str = Field(min_length=1)
     requirement: str = Field(min_length=1)
     status: RunStatus
-    prd_draft: DraftArtifact | None = None
-    prd_approval: Approval | None = None
+    prd_blueprint: PrdBlueprint | None = None
+    prd_revisions: tuple[PrdRevision, ...] = ()
+    prd_draft: PrdRevision | None = None
+    prd_readiness: PrdReadiness | None = None
+    prd_approval: PrdApprovalReceipt | None = None
     td_draft: DraftArtifact | None = None
     td_approval: Approval | None = None
     delivery_spec: DeliverySpec | None = None
@@ -114,9 +124,42 @@ class RunResponse(BaseModel):
         if self.ledger.revision != self.completeness.ledger_revision:
             raise ValueError("completeness must describe the current Fact Ledger revision")
 
+        if self.prd_draft is None:
+            if (
+                self.prd_blueprint is not None
+                or self.prd_revisions
+                or self.prd_readiness is not None
+            ):
+                raise ValueError("PRD planning and revision data require a PRD draft")
+        else:
+            if (
+                self.prd_blueprint is None
+                or self.prd_readiness is None
+                or not self.prd_revisions
+                or self.prd_revisions[-1] != self.prd_draft
+                or tuple(revision.revision for revision in self.prd_revisions)
+                != tuple(range(1, len(self.prd_revisions) + 1))
+                or self.prd_blueprint.ledger_revision != self.ledger.revision
+                or set(self.prd_blueprint.authoritative_fact_ids)
+                != {fact.fact_id for fact in self.ledger.authoritative_facts}
+                or self.prd_readiness.revision != self.prd_draft.revision
+                or self.prd_readiness.content_hash != self.prd_draft.content_hash
+            ):
+                raise ValueError("PRD blueprint, revisions, readiness, and Ledger must agree")
+        if self.prd_approval is not None and (
+            self.prd_draft is None
+            or self.prd_approval.revision != self.prd_draft.revision
+            or self.prd_approval.content_hash != self.prd_draft.content_hash
+            or self.prd_readiness is None
+            or not self.prd_readiness.ready
+        ):
+            raise ValueError("PRD approval must freeze the ready current revision and hash")
+
         if self.status is RunStatus.AWAITING_CLARIFICATION:
             valid = (
                 self.prd_draft is None
+                and self.prd_blueprint is None
+                and not self.prd_revisions
                 and self.prd_approval is None
                 and self.td_draft is None
                 and self.td_approval is None
@@ -136,13 +179,20 @@ class RunResponse(BaseModel):
                 and self.td_approval is None
                 and self.delivery_spec is None
                 and self.completeness.is_complete
-                and self.available_commands == (AvailableCommand.APPROVE_PRD,)
+                and self.prd_readiness is not None
+                and self.available_commands == (
+                    (AvailableCommand.REVISE_PRD, AvailableCommand.APPROVE_PRD)
+                    if self.prd_readiness.ready
+                    else (AvailableCommand.REVISE_PRD,)
+                )
             )
         elif self.status is RunStatus.TD_AWAITING_APPROVAL:
             valid = (
                 self.prd_draft is not None
                 and self.prd_approval is not None
                 and self.prd_approval.revision == self.prd_draft.revision
+                and self.prd_readiness is not None
+                and self.prd_readiness.ready
                 and self.td_draft is not None
                 and self.td_approval is None
                 and self.delivery_spec is None
@@ -154,6 +204,8 @@ class RunResponse(BaseModel):
                 self.prd_draft is not None
                 and self.prd_approval is not None
                 and self.prd_approval.revision == self.prd_draft.revision
+                and self.prd_readiness is not None
+                and self.prd_readiness.ready
                 and self.td_draft is not None
                 and self.td_approval is not None
                 and self.td_approval.revision == self.td_draft.revision

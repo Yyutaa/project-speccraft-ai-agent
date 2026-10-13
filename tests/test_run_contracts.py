@@ -21,6 +21,15 @@ from deliveryflow_contracts.facts import (
     RequirementFact,
     SourceEvidence,
 )
+from deliveryflow_contracts.prd import (
+    SECTION_TITLES,
+    PrdApprovalReceipt,
+    PrdBlueprint,
+    PrdReadiness,
+    PrdRevision,
+    PrdSectionId,
+    PrdSectionPlan,
+)
 from deliveryflow_contracts.runs import (
     Approval,
     AvailableCommand,
@@ -68,6 +77,40 @@ def context_fields() -> dict[str, object]:
     }
 
 
+def prd_fields() -> dict[str, object]:
+    content = "# PRD"
+    digest = hashlib.sha256(content.encode()).hexdigest()
+    draft = PrdRevision(revision=1, content=content, content_hash=digest)
+    return {
+        "prd_blueprint": PrdBlueprint(
+            ledger_revision=1,
+            authoritative_fact_ids=tuple(f"fact-{dimension.value}" for dimension in FactDimension),
+            sections=tuple(
+                PrdSectionPlan(
+                    section_id=section_id,
+                    title=SECTION_TITLES[section_id],
+                    applicable=True,
+                    fact_ids=tuple(f"fact-{dimension.value}" for dimension in FactDimension)
+                    if section_id is PrdSectionId.BACKGROUND else (),
+                )
+                for section_id in PrdSectionId
+            ),
+        ),
+        "prd_revisions": (draft,),
+        "prd_draft": draft,
+        "prd_readiness": PrdReadiness(revision=1, content_hash=digest),
+    }
+
+
+def prd_receipt() -> PrdApprovalReceipt:
+    return PrdApprovalReceipt(
+        revision=1,
+        content_hash=hashlib.sha256(b"# PRD").hexdigest(),
+        actor="tester",
+        rationale="reviewed",
+    )
+
+
 def test_create_run_request_preserves_raw_requirement_and_rejects_blank_text() -> None:
     request = CreateRunRequest(requirement="  导出大文件时显示进度。  ")
 
@@ -76,13 +119,13 @@ def test_create_run_request_preserves_raw_requirement_and_rejects_blank_text() -
         CreateRunRequest(requirement=" \n ")
 
 
-def test_prd_waiting_run_has_only_the_prd_approval_command() -> None:
+def test_prd_waiting_run_has_revision_and_approval_commands() -> None:
     run = RunResponse(
         run_id="run-1",
         requirement="导出大文件时显示进度。",
         status=RunStatus.PRD_AWAITING_APPROVAL,
-        prd_draft=DraftArtifact(revision=1, content="# PRD"),
-        available_commands=(AvailableCommand.APPROVE_PRD,),
+        available_commands=(AvailableCommand.REVISE_PRD, AvailableCommand.APPROVE_PRD),
+        **prd_fields(),
         **context_fields(),
     )
 
@@ -97,9 +140,9 @@ def test_completed_run_requires_both_approvals_and_delivery_spec() -> None:
             run_id="run-1",
             requirement="导出大文件时显示进度。",
             status=RunStatus.COMPLETED,
-            prd_draft=DraftArtifact(revision=1, content="# PRD"),
-            prd_approval=Approval(revision=1),
+            prd_approval=prd_receipt(),
             available_commands=(),
+            **prd_fields(),
             **context_fields(),
         )
 
@@ -109,8 +152,7 @@ def test_completed_run_contains_version_bound_delivery_spec() -> None:
         run_id="run-1",
         requirement="导出大文件时显示进度。",
         status=RunStatus.COMPLETED,
-        prd_draft=DraftArtifact(revision=1, content="# PRD"),
-        prd_approval=Approval(revision=1),
+        prd_approval=prd_receipt(),
         td_draft=DraftArtifact(revision=1, content="# TD"),
         td_approval=Approval(revision=1),
         delivery_spec=DeliverySpec(
@@ -121,6 +163,7 @@ def test_completed_run_contains_version_bound_delivery_spec() -> None:
             td_content="# TD",
         ),
         available_commands=(),
+        **prd_fields(),
         **context_fields(),
     )
 
@@ -209,7 +252,7 @@ def test_run_rejects_fact_evidence_not_bound_to_a_captured_source() -> None:
             run_id="run-1",
             requirement="需求",
             status=RunStatus.PRD_AWAITING_APPROVAL,
-            prd_draft=DraftArtifact(revision=1, content="# PRD"),
-            available_commands=(AvailableCommand.APPROVE_PRD,),
+            available_commands=(AvailableCommand.REVISE_PRD, AvailableCommand.APPROVE_PRD),
+            **prd_fields(),
             **{**fields, "ledger": FactLedger(revision=1, facts=tuple(facts))},
         )

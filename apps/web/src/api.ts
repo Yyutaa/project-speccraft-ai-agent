@@ -47,8 +47,15 @@ export type Run = {
   run_id: string;
   requirement: string;
   status: "awaiting_clarification" | "prd_awaiting_approval" | "td_awaiting_approval" | "completed";
-  prd_draft: { revision: number; content: string } | null;
-  prd_approval: { revision: number; approved_at: string } | null;
+  prd_blueprint: {
+    ledger_revision: number;
+    authoritative_fact_ids: string[];
+    sections: Array<{ section_id: string; title: string; applicable: boolean; fact_ids: string[]; applicability_reason: string | null }>;
+  } | null;
+  prd_revisions: Array<{ revision: number; content: string; content_hash: string; changed_section_id: string | null; feedback: string | null }>;
+  prd_draft: { revision: number; content: string; content_hash: string } | null;
+  prd_readiness: { revision: number; content_hash: string; issues: Array<{ code: string; section_id: string | null }> } | null;
+  prd_approval: { revision: number; content_hash: string; actor: string; rationale: string; approved_at: string } | null;
   td_draft: { revision: number; content: string } | null;
   td_approval: { revision: number; approved_at: string } | null;
   delivery_spec: {
@@ -58,7 +65,7 @@ export type Run = {
     prd_content: string;
     td_content: string;
   } | null;
-  available_commands: Array<"submit_clarification" | "approve_prd" | "approve_td">;
+  available_commands: Array<"submit_clarification" | "revise_prd" | "approve_prd" | "approve_td">;
   source_snapshot: SourceSnapshot;
   repository_binding: {
     repository_id: string;
@@ -125,10 +132,22 @@ export const api = {
     body: JSON.stringify(source),
   }),
   readRun: (runId: string) => request<Run>(`/api/runs/${encodeURIComponent(runId)}`),
-  approvePrd: (run: Run) => request<Run>(`/api/runs/${run.run_id}/approvals/prd`, {
+  revisePrd: (run: Run, sectionId: string, replacementBody: string, feedback: string) =>
+    request<Run>(`/api/runs/${run.run_id}/prd/revisions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        expected_revision: run.prd_draft?.revision,
+        expected_content_hash: run.prd_draft?.content_hash,
+        section_id: sectionId,
+        replacement_body: replacementBody,
+        feedback,
+      }),
+    }),
+  approvePrd: (run: Run, actor: string, rationale: string) => request<Run>(`/api/runs/${run.run_id}/approvals/prd`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ revision: run.prd_draft?.revision }),
+    body: JSON.stringify({ revision: run.prd_draft?.revision, content_hash: run.prd_draft?.content_hash, actor, rationale }),
   }),
   submitClarification: (run: Run, answers: ClarificationAnswer[]) =>
     request<Run>(`/api/runs/${run.run_id}/clarifications/answers`, {

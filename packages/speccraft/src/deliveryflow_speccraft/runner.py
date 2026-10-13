@@ -1,5 +1,7 @@
-"""Synchronous in-memory happy path used by the Phase 01 teaching scaffold."""
+"""Synchronous in-memory Run orchestration for the teaching scaffold."""
 
+from hashlib import sha256
+from pathlib import Path
 from threading import Lock
 from uuid import uuid4
 
@@ -17,6 +19,14 @@ from deliveryflow_contracts.facts import (
     SourceEvidence,
     SubmitClarificationRequest,
 )
+from deliveryflow_contracts.prd import (
+    PrdApprovalReceipt,
+    PrdApprovalRequest,
+    PrdBlueprint,
+    PrdReadiness,
+    PrdRevision,
+    PrdRevisionRequest,
+)
 from deliveryflow_contracts.runs import (
     Approval,
     AvailableCommand,
@@ -28,6 +38,16 @@ from deliveryflow_contracts.runs import (
 )
 
 from deliveryflow_speccraft.completeness import CompletenessAnalyzer
+from deliveryflow_speccraft.prd import (
+    build_prd_blueprint,
+    check_prd_readiness,
+    replace_prd_section,
+)
+from deliveryflow_speccraft.prd_authoring import (
+    FakePrdAuthor,
+    PrdAuthor,
+    load_prd_authoring_pack,
+)
 from deliveryflow_speccraft.repository_context import RepositoryHarness
 
 
@@ -51,21 +71,20 @@ class DuplicateCommand(Exception):
     """Raised when an in-memory command identifier is submitted more than once."""
 
 
-class FakeProvider:
-    """Creates deterministic draft text without calling an external model."""
+class ContentHashConflict(Exception):
+    """Raised when a command names a different PRD content hash."""
 
-    def create_prd(self, authoritative_facts: tuple[str, ...]) -> DraftArtifact:
-        fact_text = "\n".join(f"- {fact}" for fact in authoritative_facts)
-        return DraftArtifact(
-            revision=1,
-            content=(
-                "# 产品需求文档\n\n"
-                f"## 已确认需求事实\n{fact_text}\n\n"
-                "## 验收标准\n"
-                "- 结果符合上述需求。\n"
-                "- 用户可以确认该产品规格。\n"
-            ),
-        )
+
+class PrdNotReady(Exception):
+    """Raised when structural PRD checks have unresolved issues."""
+
+
+class InvalidPrdRevision(Exception):
+    """Raised when a requested PRD edit escapes its target section."""
+
+
+class FakeProvider:
+    """Retains the deterministic TD demo and clarification proposals."""
 
     def create_td(self, approved_prd: DraftArtifact) -> DraftArtifact:
         return DraftArtifact(
@@ -124,8 +143,15 @@ class FakeProvider:
 class InMemoryRunner:
     """Owns Run state for one API process; restarting the process clears it."""
 
-    def __init__(self, harness: RepositoryHarness) -> None:
+    def __init__(
+        self,
+        harness: RepositoryHarness,
+        prd_authoring_directory: Path,
+        prd_author: PrdAuthor | None = None,
+    ) -> None:
         self._provider = FakeProvider()
+        self._prd_author = prd_author or FakePrdAuthor()
+        self._prd_pack = load_prd_authoring_pack(prd_authoring_directory)
         self._analyzer = CompletenessAnalyzer()
         self._harness = harness
         self._runs: dict[str, RunResponse] = {}
@@ -155,7 +181,11 @@ class InMemoryRunner:
             if awaiting
             else None
         )
-        prd = None if awaiting else self._provider.create_prd(ledger.authoritative_view)
+        blueprint: PrdBlueprint | None = None
+        prd: PrdRevision | None = None
+        readiness: PrdReadiness | None = None
+        if not awaiting:
+            blueprint, prd, readiness = self._create_prd(ledger)
         run_id = str(uuid4())
         run = RunResponse(
             run_id=run_id,
@@ -166,10 +196,13 @@ class InMemoryRunner:
                 else RunStatus.PRD_AWAITING_APPROVAL
             ),
             prd_draft=prd,
+            prd_blueprint=blueprint,
+            prd_readiness=readiness,
+            prd_revisions=(prd,) if prd is not None else (),
             available_commands=(
                 (AvailableCommand.SUBMIT_CLARIFICATION,)
                 if awaiting
-                else (AvailableCommand.APPROVE_PRD,)
+                else self._prd_commands(readiness)
             ),
             source_snapshot=context.requirement,
             repository_binding=context.binding,
@@ -256,15 +289,15 @@ class InMemoryRunner:
             )
             completeness = self._analyzer.analyze(ledger)
             if completeness.is_complete:
-                prd = self._provider.create_prd(ledger.authoritative_view)
-                updated = run.model_copy(
-                    update={
-                        "ledger": ledger,
-                        "completeness": completeness,
+                blueprint, prd, readiness = self._create_prd(ledger)
+                updated = self._validated_update(
+                    run, {
+                        "ledger": ledger, "completeness": completeness,
                         "status": RunStatus.PRD_AWAITING_APPROVAL,
-                        "prd_draft": prd,
-                        "available_commands": (AvailableCommand.APPROVE_PRD,),
-                    }
+                        "prd_blueprint": blueprint, "prd_draft": prd,
+                        "prd_revisions": (prd,), "prd_readiness": readiness,
+                        "available_commands": self._prd_commands(readiness),
+                    },
                 )
             else:
                 next_batch = self._make_batch(
@@ -272,12 +305,12 @@ class InMemoryRunner:
                     completeness,
                     revision=batch.revision + 1,
                 )
-                updated = run.model_copy(
-                    update={
+                updated = self._validated_update(
+                    run, {
                         "ledger": ledger,
                         "completeness": completeness,
                         "clarification_batch": next_batch,
-                    }
+                    },
                 )
 
             self._runs[run_id] = updated
@@ -288,24 +321,63 @@ class InMemoryRunner:
         with self._lock:
             return self._require_run(run_id)
 
-    def approve_prd(self, run_id: str, revision: int) -> RunResponse:
+    def revise_prd(self, run_id: str, request: PrdRevisionRequest) -> RunResponse:
+        with self._lock:
+            run = self._require_run(run_id)
+            if run.status is not RunStatus.PRD_AWAITING_APPROVAL or run.prd_draft is None:
+                raise InvalidRunTransition("PRD is frozen or has not been created")
+            if request.expected_revision != run.prd_draft.revision:
+                raise RevisionConflict("PRD revision does not match the current draft")
+            if request.expected_content_hash != run.prd_draft.content_hash:
+                raise ContentHashConflict("PRD hash does not match the current draft")
+            try:
+                content = replace_prd_section(
+                    run.prd_draft.content, request.section_id, request.replacement_body
+                )
+            except ValueError as error:
+                raise InvalidPrdRevision(str(error)) from error
+            revision = PrdRevision(
+                revision=run.prd_draft.revision + 1,
+                content=content,
+                content_hash=sha256(content.encode("utf-8")).hexdigest(),
+                changed_section_id=request.section_id,
+                feedback=request.feedback.strip(),
+            )
+            readiness = check_prd_readiness(revision)
+            updated = self._validated_update(run, {
+                "prd_draft": revision,
+                "prd_revisions": run.prd_revisions + (revision,),
+                "prd_readiness": readiness,
+                "available_commands": self._prd_commands(readiness),
+            })
+            self._runs[run_id] = updated
+            return updated
+
+    def approve_prd(self, run_id: str, request: PrdApprovalRequest) -> RunResponse:
         with self._lock:
             run = self._require_run(run_id)
             if run.status is not RunStatus.PRD_AWAITING_APPROVAL:
                 raise InvalidRunTransition("PRD is not awaiting approval")
             if run.prd_draft is None:
                 raise InvalidRunTransition("PRD draft is missing")
-            if revision != run.prd_draft.revision:
+            if request.revision != run.prd_draft.revision:
                 raise RevisionConflict("PRD revision does not match the current draft")
+            if request.content_hash != run.prd_draft.content_hash:
+                raise ContentHashConflict("PRD hash does not match the current draft")
+            if run.prd_readiness is None or not run.prd_readiness.ready:
+                raise PrdNotReady("PRD has unresolved structural issues")
 
-            td = self._provider.create_td(run.prd_draft)
-            updated = run.model_copy(
-                update={
+            td = self._provider.create_td(DraftArtifact(
+                revision=run.prd_draft.revision,
+                content=run.prd_draft.content,
+            ))
+            updated = self._validated_update(
+                run, {
                     "status": RunStatus.TD_AWAITING_APPROVAL,
-                    "prd_approval": Approval(revision=revision),
+                    "prd_approval": PrdApprovalReceipt(**request.model_dump()),
                     "td_draft": td,
                     "available_commands": (AvailableCommand.APPROVE_TD,),
-                }
+                },
             )
             self._runs[run_id] = updated
             return updated
@@ -331,13 +403,13 @@ class InMemoryRunner:
                 prd_content=run.prd_draft.content,
                 td_content=run.td_draft.content,
             )
-            updated = run.model_copy(
-                update={
+            updated = self._validated_update(
+                run, {
                     "status": RunStatus.COMPLETED,
                     "td_approval": Approval(revision=revision),
                     "delivery_spec": delivery_spec,
                     "available_commands": (),
-                }
+                },
             )
             self._runs[run_id] = updated
             return updated
@@ -347,6 +419,34 @@ class InMemoryRunner:
             return self._runs[run_id]
         except KeyError as error:
             raise RunNotFound(run_id) from error
+
+    def _create_prd(
+        self, ledger: FactLedger
+    ) -> tuple[PrdBlueprint, PrdRevision, PrdReadiness]:
+        blueprint = build_prd_blueprint(ledger)
+        content = self._prd_author.author(
+            blueprint,
+            {fact.fact_id: fact.claim for fact in ledger.authoritative_facts},
+            self._prd_pack,
+        )
+        revision = PrdRevision(
+            revision=1,
+            content=content,
+            content_hash=sha256(content.encode("utf-8")).hexdigest(),
+        )
+        return blueprint, revision, check_prd_readiness(revision)
+
+    @staticmethod
+    def _prd_commands(readiness: PrdReadiness | None) -> tuple[AvailableCommand, ...]:
+        return (
+            (AvailableCommand.REVISE_PRD, AvailableCommand.APPROVE_PRD)
+            if readiness is not None and readiness.ready
+            else (AvailableCommand.REVISE_PRD,)
+        )
+
+    @staticmethod
+    def _validated_update(run: RunResponse, update: dict[str, object]) -> RunResponse:
+        return RunResponse.model_validate(run.model_copy(update=update).model_dump())
 
     def _make_batch(
         self,

@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 from deliveryflow_contracts.facts import ClarificationAnswer, SubmitClarificationRequest
+from deliveryflow_contracts.prd import PrdApprovalRequest
 from deliveryflow_contracts.runs import (
     AvailableCommand,
     CreateRunRequest,
@@ -17,7 +18,8 @@ from deliveryflow_speccraft.runner import (
 
 def make_runner() -> InMemoryRunner:
     root = Path(__file__).parent.parent / "examples/speccraft/repositories/exportflow-sample"
-    return InMemoryRunner(RepositoryHarness(root))
+    pack = Path(__file__).parent.parent / "learning-assets/authoring-pack/v1/prd"
+    return InMemoryRunner(RepositoryHarness(root), pack)
 
 
 def answer_clarification(runner: InMemoryRunner, run):
@@ -39,6 +41,16 @@ def answer_clarification(runner: InMemoryRunner, run):
     )
 
 
+def approval_request(run, revision: int | None = None) -> PrdApprovalRequest:
+    assert run.prd_draft is not None
+    return PrdApprovalRequest(
+        revision=revision or run.prd_draft.revision,
+        content_hash=run.prd_draft.content_hash,
+        actor="测试用户",
+        rationale="已审阅草稿",
+    )
+
+
 def test_run_moves_from_prd_approval_to_td_approval_to_completion() -> None:
     runner = make_runner()
     waiting = runner.create_run(CreateRunRequest(requirement="导出时显示进度。"))
@@ -48,11 +60,14 @@ def test_run_moves_from_prd_approval_to_td_approval_to_completion() -> None:
     assert waiting.clarification_batch is not None
     created = answer_clarification(runner, waiting)
     assert created.status is RunStatus.PRD_AWAITING_APPROVAL
-    assert created.available_commands == (AvailableCommand.APPROVE_PRD,)
+    assert created.available_commands == (
+        AvailableCommand.REVISE_PRD,
+        AvailableCommand.APPROVE_PRD,
+    )
     assert created.td_draft is None
     assert created.delivery_spec is None
 
-    after_prd = runner.approve_prd(created.run_id, revision=1)
+    after_prd = runner.approve_prd(created.run_id, approval_request(created))
     assert after_prd.status is RunStatus.TD_AWAITING_APPROVAL
     assert after_prd.prd_approval is not None
     assert after_prd.prd_approval.revision == 1
@@ -85,7 +100,7 @@ def test_stale_prd_revision_is_rejected_without_advancing_run() -> None:
     )
 
     with pytest.raises(RevisionConflict):
-        runner.approve_prd(created.run_id, revision=2)
+        runner.approve_prd(created.run_id, approval_request(created, revision=2))
 
     assert runner.get_run(created.run_id) == created
 
@@ -95,7 +110,7 @@ def test_stale_td_revision_is_rejected_without_completing_run() -> None:
     created = answer_clarification(
         runner, runner.create_run(CreateRunRequest(requirement="导出时显示进度。"))
     )
-    awaiting_td = runner.approve_prd(created.run_id, revision=1)
+    awaiting_td = runner.approve_prd(created.run_id, approval_request(created))
 
     with pytest.raises(RevisionConflict):
         runner.approve_td(created.run_id, revision=2)
@@ -108,10 +123,10 @@ def test_repeated_prd_approval_is_rejected_without_changing_td_draft() -> None:
     created = answer_clarification(
         runner, runner.create_run(CreateRunRequest(requirement="导出时显示进度。"))
     )
-    after_prd = runner.approve_prd(created.run_id, revision=1)
+    after_prd = runner.approve_prd(created.run_id, approval_request(created))
 
     with pytest.raises(InvalidRunTransition):
-        runner.approve_prd(created.run_id, revision=1)
+        runner.approve_prd(created.run_id, approval_request(created))
 
     assert runner.get_run(created.run_id) == after_prd
 
@@ -121,7 +136,7 @@ def test_repeated_td_approval_is_rejected_without_changing_completed_run() -> No
     created = answer_clarification(
         runner, runner.create_run(CreateRunRequest(requirement="导出时显示进度。"))
     )
-    runner.approve_prd(created.run_id, revision=1)
+    runner.approve_prd(created.run_id, approval_request(created))
     completed = runner.approve_td(created.run_id, revision=1)
 
     with pytest.raises(InvalidRunTransition):
@@ -141,8 +156,8 @@ def test_fake_provider_generates_same_drafts_for_same_requirement() -> None:
     )
     assert first.prd_draft is not None
     assert second.prd_draft is not None
-    first_completed = runner.approve_prd(first.run_id, revision=1)
-    second_completed = runner.approve_prd(second.run_id, revision=1)
+    first_completed = runner.approve_prd(first.run_id, approval_request(first))
+    second_completed = runner.approve_prd(second.run_id, approval_request(second))
 
     assert first.prd_draft is not None
     assert second.prd_draft is not None

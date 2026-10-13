@@ -31,6 +31,15 @@ def create_prd_ready_run(requirement: str) -> dict:
     return answer_all_clarifications(waiting)
 
 
+def prd_approval_body(run: dict) -> dict:
+    return {
+        "revision": run["prd_draft"]["revision"],
+        "content_hash": run["prd_draft"]["content_hash"],
+        "actor": "测试用户",
+        "rationale": "已审阅当前 PRD 内容",
+    }
+
+
 def test_run_api_happy_path_returns_each_server_owned_state() -> None:
     created_response = client.post(
         "/api/runs",
@@ -56,7 +65,7 @@ def test_run_api_happy_path_returns_each_server_owned_state() -> None:
 
     prd_response = client.post(
         f"/api/runs/{run_id}/approvals/prd",
-        json={"revision": created["prd_draft"]["revision"]},
+        json=prd_approval_body(created),
     )
     assert prd_response.status_code == 200
     after_prd = prd_response.json()
@@ -99,7 +108,7 @@ def test_stale_revision_is_rejected_without_state_change() -> None:
 
     response = client.post(
         f"/api/runs/{run_id}/approvals/prd",
-        json={"revision": 2},
+        json={**prd_approval_body(created), "revision": 2},
     )
 
     assert response.status_code == 409
@@ -111,7 +120,7 @@ def test_stale_td_revision_is_rejected_without_state_change() -> None:
     created = create_prd_ready_run("导出大文件时显示进度。")
     run_id = created["run_id"]
     awaiting_td = client.post(
-        f"/api/runs/{run_id}/approvals/prd", json={"revision": 1}
+        f"/api/runs/{run_id}/approvals/prd", json=prd_approval_body(created)
     ).json()
 
     response = client.post(
@@ -128,7 +137,7 @@ def test_repeated_approval_is_rejected_and_run_remains_unchanged() -> None:
     created = create_prd_ready_run("导出大文件时显示进度。")
     run_id = created["run_id"]
     url = f"/api/runs/{run_id}/approvals/prd"
-    body = {"revision": created["prd_draft"]["revision"]}
+    body = prd_approval_body(created)
     accepted = client.post(url, json=body)
     assert accepted.status_code == 200
 
@@ -142,7 +151,7 @@ def test_repeated_approval_is_rejected_and_run_remains_unchanged() -> None:
 def test_repeated_td_approval_is_rejected_and_completed_run_remains_unchanged() -> None:
     created = create_prd_ready_run("导出大文件时显示进度。")
     run_id = created["run_id"]
-    client.post(f"/api/runs/{run_id}/approvals/prd", json={"revision": 1})
+    client.post(f"/api/runs/{run_id}/approvals/prd", json=prd_approval_body(created))
     url = f"/api/runs/{run_id}/approvals/td"
     accepted = client.post(url, json={"revision": 1})
     assert accepted.status_code == 200
@@ -161,6 +170,81 @@ def test_unknown_run_is_not_found_and_blank_requirement_is_invalid() -> None:
     assert missing.status_code == 404
     assert missing.json()["detail"]["code"] == "run_not_found"
     assert blank.status_code == 422
+
+
+def test_prd_section_revision_then_approval_binds_current_hash() -> None:
+    created = create_prd_ready_run("导出大文件时显示进度。")
+    run_id = created["run_id"]
+    draft = created["prd_draft"]
+    response = client.post(
+        f"/api/runs/{run_id}/prd/revisions",
+        json={
+            "expected_revision": draft["revision"],
+            "expected_content_hash": draft["content_hash"],
+            "section_id": "acceptance",
+            "replacement_body": "用户能看到导出进度并得到完成提示。",
+            "feedback": "明确可观察的验收结果",
+        },
+    )
+    assert response.status_code == 200
+    revised = response.json()
+    assert revised["prd_draft"]["revision"] == 2
+    assert revised["prd_draft"]["content_hash"] != draft["content_hash"]
+    assert len(revised["prd_revisions"]) == 2
+
+    approved = client.post(
+        f"/api/runs/{run_id}/approvals/prd", json=prd_approval_body(revised)
+    )
+    assert approved.status_code == 200
+    assert approved.json()["prd_approval"]["content_hash"] == revised["prd_draft"]["content_hash"]
+
+
+def test_prd_hash_conflict_and_frozen_revision_leave_run_unchanged() -> None:
+    created = create_prd_ready_run("导出大文件时显示进度。")
+    run_id = created["run_id"]
+    wrong_hash = "0" * 64
+    rejected = client.post(
+        f"/api/runs/{run_id}/approvals/prd",
+        json={**prd_approval_body(created), "content_hash": wrong_hash},
+    )
+    assert rejected.status_code == 409
+    assert rejected.json()["detail"]["code"] == "content_hash_conflict"
+    assert client.get(f"/api/runs/{run_id}").json() == created
+
+    approved = client.post(
+        f"/api/runs/{run_id}/approvals/prd", json=prd_approval_body(created)
+    ).json()
+    rejected_revision = client.post(
+        f"/api/runs/{run_id}/prd/revisions",
+        json={
+            "expected_revision": 1,
+            "expected_content_hash": created["prd_draft"]["content_hash"],
+            "section_id": "acceptance",
+            "replacement_body": "审批后不允许修改。",
+            "feedback": "试图越权修改",
+        },
+    )
+    assert rejected_revision.status_code == 409
+    assert rejected_revision.json()["detail"]["code"] == "invalid_run_transition"
+    assert client.get(f"/api/runs/{run_id}").json() == approved
+
+
+def test_prd_revision_cannot_inject_another_section_heading() -> None:
+    created = create_prd_ready_run("导出大文件时显示进度。")
+    draft = created["prd_draft"]
+    response = client.post(
+        f"/api/runs/{created['run_id']}/prd/revisions",
+        json={
+            "expected_revision": draft["revision"],
+            "expected_content_hash": draft["content_hash"],
+            "section_id": "acceptance",
+            "replacement_body": "可验收。\n## 伪造章节\n不应写入。",
+            "feedback": "尝试跨章节修改",
+        },
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "invalid_prd_revision"
+    assert client.get(f"/api/runs/{created['run_id']}").json() == created
 
 
 def test_api_returns_auditable_sources_and_rejects_paths_outside_the_sample_root() -> None:

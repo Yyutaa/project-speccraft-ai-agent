@@ -8,7 +8,8 @@ from deliveryflow_speccraft.runner import InMemoryRunner
 
 def runner() -> InMemoryRunner:
     sample_root = Path(__file__).parent.parent / "examples/speccraft/repositories/exportflow-sample"
-    return InMemoryRunner(RepositoryHarness(sample_root))
+    pack = Path(__file__).parent.parent / "learning-assets/authoring-pack/v1/prd"
+    return InMemoryRunner(RepositoryHarness(sample_root), pack)
 
 
 def test_runner_keeps_requirement_source_separate_from_harness_context() -> None:

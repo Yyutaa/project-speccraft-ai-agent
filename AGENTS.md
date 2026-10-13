@@ -2,7 +2,7 @@
 
 ## 项目定位
 
-本仓库是个人开发的 SpecCraft AI Agent 教学项目，目前处于分阶段实现阶段。当前包含共享 Run Contract、同步单进程内存 Runner、确定性 Fake Provider 与最小 PRD-first 审批 API；持久化、真实 Provider、完整 Workflow、Worker、质量闭环和 Codex 插件尚未实现。
+本仓库是个人开发的 SpecCraft AI Agent 教学项目，目前处于分阶段实现阶段。当前包含共享 Run Contract、同步单进程内存 Runner、确定性 Fake Author、PRD Blueprint、局部修订与人工冻结，以及阶段 01 的 Fake TD 演示；持久化、真实 Provider、完整 Workflow、Worker、质量闭环和 Codex 插件尚未实现。
 
 按当前能力边界逐步开发，完成验收并记录可复现的证据。
 
@@ -42,15 +42,15 @@ PRD 必须先批准冻结，TD 不得回写已批准 PRD。模型不得代替用
 
 ## 当前代码边界
 
-- `apps/api/`：提供健康检查、静态项目状态以及内存 Run 的创建/读取/PRD 与 TD 审批 API。
-- `apps/web/`：展示静态八阶段路线，并通过 API 创建、审批和观察一个 Run；状态与可用命令来自服务端响应。
+- `apps/api/`：提供健康检查、静态项目状态以及内存 Run 的创建、读取、PRD 局部修订与 PRD/TD 审批 API。
+- `apps/web/`：展示静态八阶段路线，并通过 API 创建、修订、审批和观察一个 Run；状态与可用命令来自服务端响应。
 - `apps/cli/`：只显示项目状态。
 - `apps/worker/`：只说明 Worker 尚未实现。
-- `packages/contracts/`：定义共享 Pydantic 请求、响应、Run 状态和产物契约。
+- `packages/contracts/`：定义共享 Pydantic 请求、响应、Run 状态、PRD Blueprint/Revision/Approval 和产物契约。
 - `packages/agent-kernel/`：只保留包边界。
 - `packages/speccraft/`：包含最小内存 Runner 与确定性 Fake Provider，不实现持久化或完整 Workflow。
 - `examples/speccraft/`：匿名输入样例，不是预期输出。
-- `learning-assets/`：领域编制资源种子，不是运行时实现。
+- `learning-assets/`：PRD 模板、指南和自检是当前 PRD 编制输入；其他资源仍不代表已实现能力。
 
 ## 实现规则
 
@@ -83,6 +83,10 @@ PRD 必须先批准冻结，TD 不得回写已批准 PRD。模型不得代替用
 - 五个必需维度（角色、流程、权限、失败、验收）缺失或冲突时，确定性 Completeness Gate 必须暂停 PRD 生成；分析器不得调用模型或从自由文本猜测维度完整性。
 - 下游规格生成只读取 Fact Ledger 的权威视图；同维度用户 Decision 覆盖冲突来源事实。页面只显示服务端 Run/账本投影，并以独立用户命令提交答案。
 - 澄清答案必须完整覆盖当前阻塞问题并匹配 `expected_revision`；内存 Runner 对每个 Run 拒绝重复 `command_id`。任何失败不得留下部分账本、Run 或 Artifact 更新。
+- PRD Blueprint 由确定性代码从 Ledger 权威 Fact/Decision 构建，必须覆盖全部权威 fact ID；它只规划章节、适用性和引用，不含正文，也不设独立人工 Gate。
+- PRD Author 只能接收 Blueprint 引用的权威 claim 与版本化编制资源；基础就绪检查只判断标题、章节、顺序、空内容和占位符，不证明业务正确性，也不触发自动修复循环。
+- PRD 局部修订必须指明单个章节、用户反馈、当前 revision 与精确内容 SHA-256；每次成功修订产生新 revision 并重新执行基础检查。旧版本或旧 Hash 的命令须拒绝且不得更改 Run。
+- PRD 审批是独立人工命令，receipt 绑定当前 revision、精确内容 Hash、actor、rationale 和时间。审批后 PRD 不可变；前端只投影就绪结果、可用命令和审批证据。
 
 ## 验证
 

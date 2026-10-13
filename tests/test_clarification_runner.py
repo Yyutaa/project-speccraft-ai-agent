@@ -18,7 +18,8 @@ from deliveryflow_speccraft.runner import (
 
 def make_runner() -> InMemoryRunner:
     root = Path(__file__).parent.parent / "examples/speccraft/repositories/exportflow-sample"
-    return InMemoryRunner(RepositoryHarness(root))
+    pack = Path(__file__).parent.parent / "learning-assets/authoring-pack/v1/prd"
+    return InMemoryRunner(RepositoryHarness(root), pack)
 
 
 def answer_all(run, command_id: str = "command-1") -> SubmitClarificationRequest:

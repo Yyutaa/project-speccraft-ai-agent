@@ -15,6 +15,7 @@ const customAnswerOption = "__custom_answer__";
 
 const commandLabels: Record<Run["available_commands"][number], string> = {
   submit_clarification: "提交需求澄清",
+  revise_prd: "局部修订 PRD",
   approve_prd: "审阅并批准 PRD",
   approve_td: "审阅并批准 TD",
 };
@@ -33,6 +34,11 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
+  const [revisionSection, setRevisionSection] = useState<string | undefined>();
+  const [replacementBody, setReplacementBody] = useState("");
+  const [revisionFeedback, setRevisionFeedback] = useState("");
+  const [approvalActor, setApprovalActor] = useState("");
+  const [approvalRationale, setApprovalRationale] = useState("");
 
   useEffect(() => {
     void Promise.all([api.health(), api.scaffold()])
@@ -48,6 +54,11 @@ export default function App() {
     try {
       setRun(await action());
       setAnswers({});
+      setRevisionSection(undefined);
+      setReplacementBody("");
+      setRevisionFeedback("");
+      setApprovalActor("");
+      setApprovalRationale("");
     } catch (reason) {
       setRunError(reason instanceof Error ? reason.message : "请求失败");
     } finally {
@@ -215,10 +226,41 @@ export default function App() {
                       )}
                     </article>
                   )}
-                  {run.available_commands.includes("approve_prd") && (
-                    <div className="approval-panel"><p>PRD 草稿已生成，请审阅下方内容后确认。</p>
+                  {run.available_commands.includes("revise_prd") && (
+                    <div className="approval-panel">
+                      <p>PRD 草稿已生成。可只修订一个章节，再审阅新版本。</p>
                       <a href="#artifacts">查看 PRD 草稿</a>
-                      <Button className="run-action" loading={busy} onClick={() => void perform(() => api.approvePrd(run))}>批准 PRD</Button>
+                      <label className="field-label" htmlFor="revision-section">修订章节</label>
+                      <select id="revision-section" aria-label="修订章节" className="prd-section-select"
+                        value={revisionSection ?? ""} disabled={busy}
+                        onChange={(event) => setRevisionSection(event.target.value || undefined)}>
+                        <option value="">选择章节</option>
+                        {run.prd_blueprint?.sections.map((section) => (
+                          <option key={section.section_id} value={section.section_id}>{section.title}</option>
+                        ))}
+                      </select>
+                      <label className="field-label" htmlFor="replacement-body">修订后的章节正文</label>
+                      <Input.TextArea id="replacement-body" aria-label="修订后的章节正文" rows={5}
+                        value={replacementBody} disabled={busy} onChange={(event) => setReplacementBody(event.target.value)} />
+                      <label className="field-label" htmlFor="revision-feedback">修订反馈</label>
+                      <Input id="revision-feedback" aria-label="修订反馈" value={revisionFeedback} disabled={busy}
+                        onChange={(event) => setRevisionFeedback(event.target.value)} />
+                      <Button loading={busy} disabled={!revisionSection || !replacementBody.trim() || !revisionFeedback.trim()}
+                        onClick={() => void perform(() => api.revisePrd(run, revisionSection!, replacementBody.trim(), revisionFeedback.trim()))}>
+                        提交局部修订
+                      </Button>
+                    </div>
+                  )}
+                  {run.available_commands.includes("approve_prd") && (
+                    <div className="approval-panel"><p>基础文档检查通过。请审阅当前 PRD 内容后人工批准。</p>
+                      <label className="field-label" htmlFor="approval-actor">审批人</label>
+                      <Input id="approval-actor" aria-label="审批人" value={approvalActor} disabled={busy}
+                        onChange={(event) => setApprovalActor(event.target.value)} />
+                      <label className="field-label" htmlFor="approval-rationale">审批理由</label>
+                      <Input.TextArea id="approval-rationale" aria-label="审批理由" value={approvalRationale} disabled={busy}
+                        onChange={(event) => setApprovalRationale(event.target.value)} />
+                      <Button className="run-action" loading={busy} disabled={!approvalActor.trim() || !approvalRationale.trim()}
+                        onClick={() => void perform(() => api.approvePrd(run, approvalActor.trim(), approvalRationale.trim()))}>批准 PRD</Button>
                     </div>
                   )}
                   {run.available_commands.includes("approve_td") && (
@@ -250,8 +292,11 @@ export default function App() {
                   {run.prd_draft && (
                     <article>
                       <h3>PRD 草稿 · r{run.prd_draft.revision}</h3>
+                      <p>内容 SHA-256：<code>{run.prd_draft.content_hash}</code></p>
+                      {run.prd_readiness && <p>基础文档检查：{run.prd_readiness.issues.length === 0
+                        ? "通过" : run.prd_readiness.issues.map((issue) => `${issue.code}${issue.section_id ? ` (${issue.section_id})` : ""}`).join("、")}</p>}
                       <pre>{run.prd_draft.content}</pre>
-                      {run.prd_approval && <p>PRD 已批准 · r{run.prd_approval.revision}</p>}
+                      {run.prd_approval && <p>PRD 已批准 · r{run.prd_approval.revision} · {run.prd_approval.actor} · {run.prd_approval.rationale}</p>}
                     </article>
                   )}
                   {run.td_draft && (

@@ -35,12 +35,15 @@ function run(status: string) {
     run_id: "run-1",
     requirement: "做一个问候页面",
     status,
-    prd_draft: awaiting ? null : { revision: 1, content: "# PRD\n问候页面" },
+    prd_blueprint: awaiting ? null : { sections: [{ section_id: "acceptance", title: "验收标准", applicable: true, fact_ids: [] }] },
+    prd_revisions: awaiting ? [] : [{ revision: 1, content: "# PRD\n问候页面", content_hash: "a".repeat(64) }],
+    prd_draft: awaiting ? null : { revision: 1, content: "# PRD\n问候页面", content_hash: "a".repeat(64) },
+    prd_readiness: awaiting ? null : { revision: 1, content_hash: "a".repeat(64), issues: [] },
     prd_approval: null,
     td_draft: null,
     td_approval: null,
     delivery_spec: null,
-    available_commands: awaiting ? ["submit_clarification"] : ["approve_prd"],
+    available_commands: awaiting ? ["submit_clarification"] : ["revise_prd", "approve_prd"],
     ledger: {
       revision: awaiting ? 1 : 2,
       facts: awaiting
@@ -104,7 +107,7 @@ function run(status: string) {
   if (status === "td_awaiting_approval") {
     return {
       ...base,
-      prd_approval: { revision: 1, approved_at: "2026-10-12T00:00:00Z" },
+      prd_approval: { revision: 1, content_hash: "a".repeat(64), actor: "审阅人", rationale: "同意", approved_at: "2026-10-12T00:00:00Z" },
       td_draft: { revision: 1, content: "# TD\n使用 React" },
       available_commands: ["approve_td"],
     };
@@ -112,7 +115,7 @@ function run(status: string) {
   if (status === "completed") {
     return {
       ...base,
-      prd_approval: { revision: 1, approved_at: "2026-10-12T00:00:00Z" },
+      prd_approval: { revision: 1, content_hash: "a".repeat(64), actor: "审阅人", rationale: "同意", approved_at: "2026-10-12T00:00:00Z" },
       td_draft: { revision: 1, content: "# TD\n使用 React" },
       td_approval: { revision: 1, approved_at: "2026-10-12T00:01:00Z" },
       delivery_spec: { run_id: "run-1", prd_revision: 1, td_revision: 1, prd_content: "# PRD\n问候页面", td_content: "# TD\n使用 React" },
@@ -199,8 +202,13 @@ test("runs the PRD-first happy path from API-projected state", async () => {
     body: expect.stringContaining('"command_id":"run-1:clarification:1"'),
   }));
 
+  fireEvent.change(screen.getByRole("textbox", { name: "审批人" }), { target: { value: "审阅人" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "审批理由" }), { target: { value: "同意当前版本" } });
   fireEvent.click(screen.getByRole("button", { name: "批准 PRD" }));
   expect(await screen.findByText("等待 TD 人工审批")).toBeInTheDocument();
+  expect(fetcher).toHaveBeenCalledWith("/api/runs/run-1/approvals/prd", expect.objectContaining({
+    body: JSON.stringify({ revision: 1, content_hash: "a".repeat(64), actor: "审阅人", rationale: "同意当前版本" }),
+  }));
   expect(screen.getByText("# TD 使用 React")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "批准 TD" }));
   expect(await screen.findByText("已完成")).toBeInTheDocument();
@@ -250,6 +258,51 @@ test("keeps the last server state when an approval is rejected", async () => {
   expect(screen.getByText("等待用户澄清需求")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "提交澄清回答" })).toBeInTheDocument();
   await waitFor(() => expect(screen.queryByText("等待 PRD 人工审批")).not.toBeInTheDocument());
+});
+
+test("submits one PRD section revision and displays only the returned revision", async () => {
+  let current = run("prd_awaiting_approval");
+  const fetcher = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input);
+    if (path === "/api/health") return json({ status: "ok", service: "speccraft-project-scaffold" });
+    if (path === "/api/scaffold") return json(scaffold);
+    if (path === "/api/runs/run-1" && !init) return json(current);
+    if (path.endsWith("/prd/revisions")) {
+      current = {
+        ...current,
+        prd_draft: { revision: 2, content: "# PRD\n新的验收要求", content_hash: "b".repeat(64) },
+        prd_revisions: [...current.prd_revisions, { revision: 2, content: "# PRD\n新的验收要求", content_hash: "b".repeat(64) }],
+        prd_readiness: { revision: 2, content_hash: "b".repeat(64), issues: [] },
+      };
+      return json(current);
+    }
+    return json({ detail: { code: "unexpected" } }, 500);
+  });
+  installApi(fetcher as typeof fetch);
+  render(<App />);
+
+  expect(await screen.findByText("API 已连接")).toBeInTheDocument();
+  fireEvent.change(screen.getByRole("textbox", { name: "Run ID" }), { target: { value: "run-1" } });
+  fireEvent.click(screen.getByRole("button", { name: "打开 Run" }));
+  expect(await screen.findByText("PRD 草稿 · r1")).toBeInTheDocument();
+  fireEvent.change(screen.getByRole("combobox", { name: "修订章节" }), { target: { value: "acceptance" } });
+  expect(screen.getByRole("combobox", { name: "修订章节" })).toHaveValue("acceptance");
+  fireEvent.change(screen.getByRole("textbox", { name: "修订后的章节正文" }), { target: { value: "新的验收要求" } });
+  expect(screen.getByRole("textbox", { name: "修订后的章节正文" })).toHaveValue("新的验收要求");
+  fireEvent.change(screen.getByRole("textbox", { name: "修订反馈" }), { target: { value: "验收条件更具体" } });
+  expect(screen.getByRole("textbox", { name: "修订反馈" })).toHaveValue("验收条件更具体");
+  await waitFor(() => expect(screen.getByRole("button", { name: "提交局部修订" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "提交局部修订" }));
+  expect(await screen.findByText("PRD 草稿 · r2")).toBeInTheDocument();
+  expect(fetcher).toHaveBeenCalledWith("/api/runs/run-1/prd/revisions", expect.objectContaining({
+    body: JSON.stringify({
+      expected_revision: 1,
+      expected_content_hash: "a".repeat(64),
+      section_id: "acceptance",
+      replacement_body: "新的验收要求",
+      feedback: "验收条件更具体",
+    }),
+  }));
 });
 
 test("creates a run from an allowed repository requirement path", async () => {
